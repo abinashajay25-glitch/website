@@ -136,7 +136,16 @@ async function handleAuth(event, action) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action, email, password })
         });
-        const data = await res.json();
+        
+        let data = {};
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
+            data = await res.json();
+        } else {
+            const rawText = await res.text();
+            data = { status: "error", message: `Server error (${res.status}). Please check network or try again.` };
+        }
+
         if (res.ok && data.status === 'success') {
             msg.style.color = "var(--accent-emerald)";
             msg.textContent = data.message + " Redirecting...";
@@ -147,7 +156,7 @@ async function handleAuth(event, action) {
         }
     } catch (err) {
         msg.style.color = "var(--accent-rose)";
-        msg.textContent = "Network error: " + err.message;
+        msg.textContent = "Authentication error: " + err.message;
     }
 }
 </script>

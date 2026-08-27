@@ -67,6 +67,13 @@ def get_db():
     return conn
 
 
+@app.errorhandler(Exception)
+def handle_exception(e):
+    if request.path.startswith("/api/"):
+        return jsonify({"status": "error", "message": f"Server error: {str(e)}"}), 500
+    return e
+
+
 def _safe_url(value):
     value = (value or "").strip()
     if not value:
@@ -156,7 +163,6 @@ def ensure_schema(conn):
         """
     )
     
-    # Check and add missing columns if upgrading existing DB
     opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)").fetchall()}
     for col, col_type in [("remote_flag", "INTEGER DEFAULT 1"), ("stipend_prize", "TEXT"), ("experience_level", "TEXT DEFAULT 'All Levels'"), ("degree_req", "TEXT"), ("dept_req", "TEXT"), ("year_req", "TEXT"), ("paid_flag", "INTEGER DEFAULT 1"), ("verified_date", "TEXT")]:
         if col not in opp_cols:
@@ -217,6 +223,10 @@ def ensure_schema(conn):
         )
         """
     )
+
+    user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "is_admin" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
 
     # Purge expired opportunities automatically
     conn.execute("DELETE FROM opportunities WHERE deadline < ?", (today_iso(),))
@@ -565,7 +575,7 @@ def auth_api():
             conn.close()
             return jsonify({"status": "error", "message": "Email is already registered. Please sign in."}), 400
 
-    user = conn.execute("SELECT id, email, password, is_admin FROM users WHERE email = ?", (email,)).fetchone()
+    user = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     if user:
         stored_password = user["password"]
         if check_password_hash(stored_password, password) or stored_password == password:
@@ -574,9 +584,10 @@ def auth_api():
                 conn.execute("UPDATE users SET password = ? WHERE id = ?", (new_hashed, user["id"]))
                 conn.commit()
             session["user_id"] = user["id"]
-            session["is_admin"] = bool(user["is_admin"])
+            is_admin = bool(user["is_admin"]) if "is_admin" in user.keys() else False
+            session["is_admin"] = is_admin
             conn.close()
-            return jsonify({"status": "success", "message": f"Logged in as {user['email']}", "is_admin": bool(user["is_admin"])})
+            return jsonify({"status": "success", "message": f"Logged in as {user['email']}", "is_admin": is_admin})
     
     conn.close()
     return jsonify({"status": "error", "message": "Invalid email or password."}), 401
@@ -620,18 +631,16 @@ def evaluate_eligibility(profile, opportunity):
     matches = 0
     total_checks = 0
 
-    # Department evaluation
     if dept_req and dept_req != "all departments":
         total_checks += 1
         if dept and (dept in dept_req or any(tok in dept_req for tok in dept.split() if len(tok) > 2)):
             reasons.append(f"✅ Department match: Your {profile.get('department')} background meets requirements ({opportunity.get('dept_req')}).")
             matches += 1
         else:
-            reasons.append(f"⚠️ Department mismatch: Opportunity prefers {opportunity.get('dept_req')}.")
+            reasons.append(f"⚠️ Department check: Opportunity prefers {opportunity.get('dept_req')}.")
     else:
         reasons.append("✅ Open to all department specializations.")
 
-    # Academic Year evaluation
     if year_req:
         total_checks += 1
         if year and year in year_req:
@@ -640,7 +649,6 @@ def evaluate_eligibility(profile, opportunity):
         else:
             reasons.append(f"⚠️ Academic year check: Preferred for Year {opportunity.get('year_req')}.")
 
-    # Skill match check
     if opp_skills:
         total_checks += 1
         req_skill_list = [s.strip().lower() for s in opp_skills.split(",") if s.strip()]
@@ -669,7 +677,6 @@ def calculate_ai_match(profile, opportunity, all_courses):
     prof_skills = [s.lower() for s in (profile.get("skills") or [])]
     opp_skills_str = opportunity.get("skills") or ""
     
-    # Skill Gap
     req_skills = [s.strip() for s in opp_skills_str.split(",") if s.strip()]
     matching_skills = [s for s in req_skills if s.lower() in prof_skills or any(ps in s.lower() or s.lower() in ps for ps in prof_skills)]
     missing_skills = [s for s in req_skills if s not in matching_skills]
@@ -686,7 +693,6 @@ def calculate_ai_match(profile, opportunity, all_courses):
                     "url": c.get("registration_url") or "#"
                 })
 
-    # AI Match Score Calculation
     score = 45
     if req_skills:
         score += int((len(matching_skills) / len(req_skills)) * 35)
@@ -705,7 +711,6 @@ def calculate_ai_match(profile, opportunity, all_courses):
 
     match_score = min(98, max(50, score))
 
-    # Structured Checklist "Why this matches you"
     checklist = []
     if matching_skills:
         checklist.append(f"✅ Your {', '.join(matching_skills[:2])} skill(s) match requirement")
@@ -716,7 +721,6 @@ def calculate_ai_match(profile, opportunity, all_courses):
     if profile.get("location"):
         checklist.append(f"⚠️ Location preference ({profile.get('location')}) evaluated against {opportunity.get('location')}")
 
-    # Action Plan
     deadline = opportunity.get("deadline", "Upcoming")
     action_plan = [
         {"week": "Week 1", "title": "Skill Preparation", "action": f"Master missing skills ({missing_skills[0]})" if missing_skills else "Review project submission prerequisites."},
@@ -728,7 +732,6 @@ def calculate_ai_match(profile, opportunity, all_courses):
     trust_info = calculate_trust_score(opportunity.get("registration_url"), opportunity.get("source_verified"))
     eligibility_eval = evaluate_eligibility(profile, opportunity)
 
-    # Deadline status
     deadline_date = datetime.strptime(opportunity["deadline"], "%Y-%m-%d") if opportunity.get("deadline") else datetime.now()
     days_rem = (deadline_date - datetime.now()).days
 
@@ -979,7 +982,7 @@ def applications_api():
     if request.method == "POST":
         data = request.get_json(force=True) or {}
         opp_id = data.get("opportunity_id")
-        status = data.get("status", "Saved") # Saved, Planning to Apply, Applied, Interview, Shortlisted, Selected, Rejected
+        status = data.get("status", "Saved")
         notes = data.get("notes", "")
         
         conn.execute(
