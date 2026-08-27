@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: nextstep-opportunities
+    runtime: docker
+    repo: https://github.com/abinashajay25-glitch/website
+    plan: free
+    healthCheckPath: /login
+    autoDeploy: true

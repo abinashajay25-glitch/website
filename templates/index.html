@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXTSTEP — Student Opportunity Decision Engine</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<header class="app-header">
+    <div class="nav-container">
+        <a href="/" class="brand-logo">
+            <span class="logo-main">NEXT<span class="logo-accent">STEP</span></span>
+            <span class="badge-ai">AI DECISION ENGINE</span>
+        </a>
+        
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-target="section-engine">⚡ Matched Engine</button>
+            <button class="nav-tab" data-target="section-nlp">🔎 AI Search</button>
+            <button class="nav-tab" data-target="section-tracker">🔖 Application Tracker</button>
+            <button class="nav-tab" data-target="section-roadmap">🧠 Learning Path</button>
+            <button class="nav-tab" data-target="section-profile">👤 Profile</button>
+        </nav>
+        
+        <div class="nav-user">
+            <span id="userStatusBadge" class="status-indicator">Loading...</span>
+        </div>
+    </div>
+</header>
+
+<main class="main-content">
+
+    <!-- HERO HEADER -->
+    <section class="hero-banner">
+        <div class="hero-bg-glow"></div>
+        <div class="hero-text">
+            <div class="hero-chip">🤖 AI-POWERED STUDENT OPPORTUNITY DECISION ENGINE</div>
+            <h1>Smart recommendations. Zero noise. <br><span class="hero-grad">Your direct path to growth.</span></h1>
+            <p>NextStep filters eligibility, calculates skill gaps, verifies official sources, and builds 30-day action plans to accelerate your career.</p>
+        </div>
+    </section>
+
+    <!-- SECTION 1: AI MATCH & DECISION ENGINE -->
+    <section id="section-engine" class="tab-section active">
+        <div class="section-title-bar">
+            <div>
+                <h2>⚡ Personalized Decision Engine</h2>
+                <p>Top opportunities ranked for your department, year, skills, and career goals.</p>
+            </div>
+            <div class="profile-complete-banner" id="profileCompletionCard">
+                <span>Profile Completeness: <strong id="profilePercent">0%</strong></span>
+                <div class="progress-bar-bg"><div class="progress-bar-fill" id="profileProgressBar" style="width: 0%;"></div></div>
+            </div>
+        </div>
+
+        <!-- TOOLBAR & FILTERS -->
+        <div class="engine-toolbar">
+            <div class="search-box-wrapper">
+                <input id="searchInput" class="search-input" type="search" placeholder="Filter by title, skills, or organization..." aria-label="Search opportunities">
+            </div>
+            <div class="category-pills">
+                <button class="cat-pill active" data-category="All">All</button>
+                <button class="cat-pill" data-category="Hackathon">Hackathons</button>
+                <button class="cat-pill" data-category="Internship">Internships</button>
+                <button class="cat-pill" data-category="Course">Courses</button>
+                <button class="cat-pill" data-category="Certification">Certifications</button>
+                <button class="cat-pill" data-category="Expo">Expos</button>
+                <button class="cat-pill" data-category="Job">Jobs</button>
+            </div>
+            <select id="sortSelect" class="sort-select">
+                <option value="match">Sort by AI Match Score</option>
+                <option value="deadline">Sort by Deadline</option>
+            </select>
+        </div>
+
+        <div id="engineResults" class="opportunity-grid">
+            <div class="loading-state">
+                <div class="spinner"></div>
+                <p>Analyzing profile and running eligibility AI match engine...</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION 2: NATURAL LANGUAGE SEARCH -->
+    <section id="section-nlp" class="tab-section">
+        <div class="nlp-hero-box">
+            <h2>🔎 AI Natural Language Search</h2>
+            <p>Ask in plain English — NextStep automatically parses your prompt, department, year, and skills to find perfect matches.</p>
+            
+            <form id="nlpForm" class="nlp-input-group">
+                <input type="text" id="nlpQuery" class="nlp-input" placeholder="e.g. I'm a 2nd year AI & DS student with Python and ML. Find free AI hackathons for me." required>
+                <button type="submit" class="btn-nlp">Run AI Search</button>
+            </form>
+
+            <div class="nlp-chips">
+                <span class="chip-label">Try these queries:</span>
+                <button type="button" class="prompt-chip" onclick="fillPrompt('2nd year AI & DS student with Python looking for AI hackathons')">AI Hackathons for 2nd Year</button>
+                <button type="button" class="prompt-chip" onclick="fillPrompt('CS student interested in open source remote internships')">Remote Open Source Internships</button>
+                <button type="button" class="prompt-chip" onclick="fillPrompt('Free Google cybersecurity courses and certifications')">Google Cybersecurity Courses</button>
+            </div>
+        </div>
+
+        <div id="nlpIntentBox" class="intent-display-box" style="display: none;">
+            <h3>🤖 Parsed Intent Parameters</h3>
+            <div id="intentTags" class="intent-tags-container"></div>
+        </div>
+
+        <div id="nlpResults" class="opportunity-grid">
+            <div class="empty-state">
+                <p>Enter a conversational prompt above to test AI natural language search.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION 3: APPLICATION TRACKER DASHBOARD -->
+    <section id="section-tracker" class="tab-section">
+        <div class="section-title-bar">
+            <div>
+                <h2>🔖 Smart Application Tracker</h2>
+                <p>Track your decision journey from saved opportunities to completed applications.</p>
+            </div>
+        </div>
+
+        <div class="tracker-metrics-grid">
+            <div class="metric-card metric-saved">
+                <div class="metric-num" id="metricSavedCount">0</div>
+                <div class="metric-label">Saved Opportunities</div>
+            </div>
+            <div class="metric-card metric-applied">
+                <div class="metric-num" id="metricAppliedCount">0</div>
+                <div class="metric-label">Applications Submitted</div>
+            </div>
+            <div class="metric-card metric-completed">
+                <div class="metric-num" id="metricCompletedCount">0</div>
+                <div class="metric-label">Completed / Verified</div>
+            </div>
+        </div>
+
+        <div id="trackerContainer" class="opportunity-grid">
+            <div class="empty-state">
+                <p>No saved or applied opportunities yet. Bookmark opportunities from the Matched Engine to track them here!</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION 4: PERSONALIZED LEARNING PATH -->
+    <section id="section-roadmap" class="tab-section">
+        <div class="section-title-bar">
+            <div>
+                <h2>🧠 Personalized Career Learning Path</h2>
+                <p>Visual roadmap connecting your career goal to required skills, verified courses, hackathons, and internships.</p>
+            </div>
+            <div class="path-selector">
+                <label for="careerGoalSelect">Select Target Career Goal:</label>
+                <select id="careerGoalSelect" class="sort-select">
+                    <option value="AI Engineer">AI & Machine Learning Engineer</option>
+                    <option value="Full Stack Developer">Full Stack Software Developer</option>
+                    <option value="Cybersecurity Specialist">Cybersecurity Specialist</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="roadmap-card">
+            <h3 id="roadmapTitle">Career Progression Roadmap</h3>
+            <div id="roadmapNodes" class="roadmap-timeline"></div>
+        </div>
+    </section>
+
+    <!-- SECTION 5: STUDENT PROFILE -->
+    <section id="section-profile" class="tab-section">
+        <div class="section-title-bar">
+            <div>
+                <h2>👤 Student Academic & Career Profile</h2>
+                <p>Keep your profile updated for accurate eligibility filtering and AI match scoring.</p>
+            </div>
+        </div>
+
+        <div class="profile-card-container">
+            <form id="profileForm" class="profile-form">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="department">Department / Specialization</label>
+                        <select id="department" required>
+                            <option value="">Select Department</option>
+                            <option>AI & Data Science</option>
+                            <option>Computer Science</option>
+                            <option>Information Technology</option>
+                            <option>Electronics & Communication (ECE)</option>
+                            <option>Electrical & Electronics (EEE)</option>
+                            <option>Mechanical Engineering</option>
+                            <option>Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="year">Academic Year</label>
+                        <select id="year" required>
+                            <option value="1">1st Year</option>
+                            <option value="2">2nd Year</option>
+                            <option value="3">3rd Year</option>
+                            <option value="4">4th Year</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group span-2">
+                        <label>Current Skills</label>
+                        <div class="skills-checkbox-grid">
+                            <label><input name="skills" type="checkbox" value="Python"> Python</label>
+                            <label><input name="skills" type="checkbox" value="Machine Learning"> Machine Learning</label>
+                            <label><input name="skills" type="checkbox" value="SQL"> SQL</label>
+                            <label><input name="skills" type="checkbox" value="JavaScript"> JavaScript</label>
+                            <label><input name="skills" type="checkbox" value="Java"> Java</label>
+                            <label><input name="skills" type="checkbox" value="C++"> C++</label>
+                            <label><input name="skills" type="checkbox" value="Git"> Git</label>
+                            <label><input name="skills" type="checkbox" value="Cybersecurity"> Cybersecurity</label>
+                            <label><input name="skills" type="checkbox" value="Cloud"> Cloud & Azure</label>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="interest">Primary Technical Interest</label>
+                        <select id="interest" required>
+                            <option value="">Select Primary Interest</option>
+                            <option>Artificial Intelligence & ML</option>
+                            <option>Data Science & Analytics</option>
+                            <option>Web & Full Stack Development</option>
+                            <option>Cybersecurity & Defense</option>
+                            <option>Cloud & DevOps</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="location">Preferred Location</label>
+                        <input id="location" type="text" placeholder="e.g. Remote, Chennai, Hybrid" required>
+                    </div>
+
+                    <div class="form-group span-2">
+                        <label for="career">Target Career Goal</label>
+                        <select id="career" required>
+                            <option value="">Select Career Goal</option>
+                            <option>AI Engineer</option>
+                            <option>Full Stack Developer</option>
+                            <option>Cybersecurity Specialist</option>
+                            <option>Data Scientist</option>
+                            <option>Internship</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn-save-profile">Save Profile & Refresh Decision Engine</button>
+                </div>
+            </form>
+        </div>
+    </section>
+
+</main>
+
+<footer>
+    <div class="footer-container">
+        <strong>NEXTSTEP</strong> — Student Opportunity Decision Engine
+        <p>Built for hackathons & student growth. Real data, real verification.</p>
+    </div>
+</footer>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

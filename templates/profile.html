@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXTSTEP | My Profile</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<header>
+    <div class="logo">
+        NEXT<span>STEP</span>
+    </div>
+
+    <nav>
+        <a href="/">Home</a>
+        <a href="/profile">My Profile</a>
+    </nav>
+</header>
+
+<section class="section">
+    <div class="section-heading">
+        <h2>Tell us about yourself</h2>
+        <p>Your profile helps us find relevant opportunities.</p>
+    </div>
+
+    <div class="profile-card">
+        <form id="profileForm">
+            <div class="form-grid">
+                <div>
+                    <label>Course / Department</label>
+                    <input id="department" type="text" placeholder="CSE, ECE, Mechanical, MBA, B.Tech AI & DS" required>
+                </div>
+
+                <div>
+                    <label>Year</label>
+                    <select id="year">
+                        <option value="1">1st Year</option>
+                        <option value="2">2nd Year</option>
+                        <option value="3">3rd Year</option>
+                        <option value="4">4th Year</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label>Skills</label>
+                    <input id="skills" type="text" placeholder="Python, SQL, HTML" required>
+                    <small>Separate skills with commas</small>
+                </div>
+
+                <div>
+                    <label>Interest</label>
+                    <input id="interest" type="text" placeholder="AI / Web Development" required>
+                </div>
+
+                <div>
+                    <label>Location</label>
+                    <input id="location" type="text" placeholder="Chennai">
+                </div>
+
+                <div>
+                    <label>Career Goal</label>
+                    <input id="career" type="text" placeholder="Data Scientist" required>
+                </div>
+            </div>
+
+            <button type="submit" class="primary-button">Find My Opportunities →</button>
+        </form>
+    </div>
+</section>
+
+<section id="opportunities" class="section light">
+    <div class="section-heading">
+        <h2>Recommended opportunities</h2>
+        <p>Based on your profile, we’ll match the best internships, hackathons, and courses.</p>
+    </div>
+
+    <div class="toolbar">
+        <input id="searchInput" class="search-box" type="search" placeholder="Search opportunities, skills, or organizations" aria-label="Search opportunities">
+        <select id="sortSelect" class="sort-select" aria-label="Sort opportunities">
+            <option value="deadline">Sort by deadline</option>
+            <option value="match">Sort by match</option>
+        </select>
+    </div>
+
+    <div class="category-buttons">
+        <button class="category-button active" data-category="All">All</button>
+        <button class="category-button" data-category="Hackathon">Hackathons</button>
+        <button class="category-button" data-category="Course">Courses</button>
+        <button class="category-button" data-category="Internship">Internships</button>
+        <button class="category-button" data-category="Job">Jobs</button>
+    </div>
+
+    <div id="results">
+        <div class="empty-state">
+            <h3>Ready for your profile</h3>
+            <p>Fill in your details and discover the best opportunities.</p>
+        </div>
+    </div>
+</section>
+
+<footer>
+    <strong>NEXTSTEP</strong>
+    <p>Helping students discover their next opportunity.</p>
+</footer>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXTSTEP | Home</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<header class="navbar">
+    <div class="navbar-container">
+        <div class="logo">
+            NEXT<span>STEP</span>
+        </div>
+
+        <nav class="navbar-menu">
+            <a href="/" class="nav-link">Home</a>
+            <a href="#about" class="nav-link">About</a>
+            <a href="/opportunities" class="nav-link">Opportunities</a>
+        </nav>
+        
+        <div class="navbar-auth">
+            <a href="/login" class="btn-login">Login</a>
+            <a href="/login" class="btn-signup">Create Account</a>
+        </div>
+    </div>
+</header>
+
+<section id="home" class="hero">
+    <div class="hero-content">
+        <h1>Find opportunities<br>that fit <span>you.</span></h1>
+        <p>
+            Discover internships, hackathons, courses, and jobs matched to your skills and career goals.
+        </p>
+        <div class="hero-buttons">
+            <a href="/login" class="btn-primary-large">Create Account</a>
+            <a href="/login" class="btn-secondary-large">Login</a>
+        </div>
+    </div>
+</section>
+
+<section id="opportunities" class="section light">
+    <div class="section-heading">
+        <h2>Why Choose NEXTSTEP?</h2>
+        <p>Your personalized gateway to amazing opportunities</p>
+    </div>
+
+    <div class="features-grid">
+        <div class="feature-card">
+            <div class="feature-icon">🎯</div>
+            <h3>Personalized Matches</h3>
+            <p>Get opportunities tailored to your skills, interests, and career goals.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">📅</div>
+            <h3>Updated Daily</h3>
+            <p>New opportunities added every day from top companies and organizations.</p>
+        </div>
+        <div class="feature-card">
+            <div class="feature-icon">🚀</div>
+            <h3>Grow Your Career</h3>
+            <p>Internships, courses, hackathons, and jobs all in one place.</p>
+        </div>
+    </div>
+
+    <div class="cta-section">
+        <h2>Ready to get started?</h2>
+        <p>Join thousands of students finding their next opportunity</p>
+        <a href="/login" class="btn-primary-large">Sign Up Now</a>
+    </div>
+</section>
+
+<footer>
+    <strong>NEXTSTEP</strong>
+    <p>Helping students discover their next opportunity.</p>
+</footer>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

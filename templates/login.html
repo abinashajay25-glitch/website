@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXTSTEP — Student Opportunity Decision Engine | Auth</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        .auth-wrapper {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: radial-gradient(circle at center, rgba(99, 102, 241, 0.15), transparent 70%);
+        }
+        .auth-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 40px;
+            width: 100%;
+            max-width: 440px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+        }
+        .auth-tabs-toggle {
+            display: flex;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 4px;
+            border-radius: var(--radius-full);
+            margin-bottom: 24px;
+            border: 1px solid var(--border-color);
+        }
+        .auth-tab-btn {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            padding: 10px;
+            font-weight: 700;
+            font-size: 0.85rem;
+            border-radius: var(--radius-full);
+            cursor: pointer;
+        }
+        .auth-tab-btn.active {
+            background: var(--primary);
+            color: #FFFFFF;
+        }
+        .auth-form-box { display: none; }
+        .auth-form-box.active { display: block; }
+        .auth-msg {
+            margin-top: 14px;
+            font-size: 0.85rem;
+            color: var(--accent-rose);
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+<div class="auth-wrapper">
+    <div class="auth-card">
+        <div style="text-align: center; margin-bottom: 24px;">
+            <a href="/" class="brand-logo" style="justify-content: center;">
+                <span class="logo-main">NEXT<span class="logo-accent">STEP</span></span>
+                <span class="badge-ai">AI ENGINE</span>
+            </a>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-top: 8px;">Sign in to access your student decision dashboard</p>
+        </div>
+
+        <div class="auth-tabs-toggle">
+            <button type="button" class="auth-tab-btn active" id="loginTab">Sign In</button>
+            <button type="button" class="auth-tab-btn" id="signupTab">Create Account</button>
+        </div>
+
+        <div id="loginFormBox" class="auth-form-box active">
+            <form onsubmit="handleAuth(event, 'login')">
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label for="loginEmail">Email Address</label>
+                    <input id="loginEmail" type="email" placeholder="student@university.edu" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label for="loginPassword">Password</label>
+                    <input id="loginPassword" type="password" minlength="6" placeholder="••••••••" required>
+                </div>
+                <button type="submit" class="btn-save-profile" style="width: 100%; margin: 0;">Sign In to Decision Engine</button>
+            </form>
+            <div id="loginMsg" class="auth-msg"></div>
+        </div>
+
+        <div id="signupFormBox" class="auth-form-box">
+            <form onsubmit="handleAuth(event, 'signup')">
+                <div class="form-group" style="margin-bottom: 16px;">
+                    <label for="signupEmail">Email Address</label>
+                    <input id="signupEmail" type="email" placeholder="student@university.edu" required>
+                </div>
+                <div class="form-group" style="margin-bottom: 20px;">
+                    <label for="signupPassword">Password</label>
+                    <input id="signupPassword" type="password" minlength="6" placeholder="At least 6 characters" required>
+                </div>
+                <button type="submit" class="btn-save-profile" style="width: 100%; margin: 0;">Create Account & Get Started</button>
+            </form>
+            <div id="signupMsg" class="auth-msg"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('loginTab').addEventListener('click', () => {
+    document.getElementById('loginFormBox').classList.add('active');
+    document.getElementById('signupFormBox').classList.remove('active');
+    document.getElementById('loginTab').classList.add('active');
+    document.getElementById('signupTab').classList.remove('active');
+});
+
+document.getElementById('signupTab').addEventListener('click', () => {
+    document.getElementById('signupFormBox').classList.add('active');
+    document.getElementById('loginFormBox').classList.remove('active');
+    document.getElementById('signupTab').classList.add('active');
+    document.getElementById('loginTab').classList.remove('active');
+});
+
+async function handleAuth(event, action) {
+    event.preventDefault();
+    const email = document.getElementById(action === 'login' ? 'loginEmail' : 'signupEmail').value;
+    const password = document.getElementById(action === 'login' ? 'loginPassword' : 'signupPassword').value;
+    const msg = document.getElementById(action === 'login' ? 'loginMsg' : 'signupMsg');
+
+    msg.style.color = "var(--text-muted)";
+    msg.textContent = "Authenticating...";
+
+    try {
+        const res = await fetch('/api/auth', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, email, password })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            msg.style.color = "var(--accent-emerald)";
+            msg.textContent = data.message + " Redirecting...";
+            setTimeout(() => { window.location.href = '/'; }, 600);
+        } else {
+            msg.style.color = "var(--accent-rose)";
+            msg.textContent = data.message || "Authentication failed.";
+        }
+    } catch (err) {
+        msg.style.color = "var(--accent-rose)";
+        msg.textContent = "Network error: " + err.message;
+    }
+}
+</script>
+</body>
+</html>
