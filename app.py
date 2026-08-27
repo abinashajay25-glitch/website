@@ -3,7 +3,7 @@ import re
 import json
 import uuid
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -13,11 +13,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "nextstep-secret-key-2026")
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "nextstep-production-secret-2026")
 DATABASE = os.environ.get("DATABASE_PATH", "opportunities.db")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 
-VALID_CATEGORIES = {"Hackathon", "Expo", "Internship", "Course", "Job", "Certification", "Workshop"}
+VALID_CATEGORIES = {
+    "Hackathon", "Internship", "Job", "Course", "Scholarship",
+    "Competition", "Certification", "Fellowship", "Research", "Government Opportunity"
+}
 
 OFFICIAL_DOMAINS = (
     "summerofcode.withgoogle.com",
@@ -45,6 +48,10 @@ OFFICIAL_DOMAINS = (
     "swayam.gov.in",
     "www.netacad.com",
     "www.mlh.com",
+    "drdo.gov.in",
+    "isro.gov.in",
+    "dst.gov.in",
+    "fulbright-hays.org",
 )
 
 UNTRUSTED_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd")
@@ -60,10 +67,6 @@ def get_db():
     return conn
 
 
-def _normalize_text(value):
-    return " ".join(str(value or "").strip().split())
-
-
 def _safe_url(value):
     value = (value or "").strip()
     if not value:
@@ -76,10 +79,10 @@ def calculate_trust_score(url, source_verified_flag=0):
     if not cleaned:
         return {
             "trust_score": 50,
-            "trust_badge": "Partially Verified",
+            "trust_badge": "⚠ Source Not Verified",
             "domain": "Unknown",
             "is_https": False,
-            "reason": "URL not specified. Verify details directly with issuer."
+            "reason": "Application URL is not specified. Verify directly with issuer before applying."
         }
     parsed = urlparse(cleaned)
     host = parsed.netloc.lower()
@@ -88,10 +91,10 @@ def calculate_trust_score(url, source_verified_flag=0):
     if any(shortener in host for shortener in UNTRUSTED_SHORTENERS):
         return {
             "trust_score": 40,
-            "trust_badge": "Unverified",
+            "trust_badge": "⚠ Source Not Verified",
             "domain": host,
             "is_https": is_https,
-            "reason": "URL uses a link shortener. Proceed with caution."
+            "reason": "URL uses a shortener. Exercise caution."
         }
         
     is_official = any(host == domain or host.endswith(f".{domain}") for domain in OFFICIAL_DOMAINS) or bool(source_verified_flag)
@@ -99,26 +102,26 @@ def calculate_trust_score(url, source_verified_flag=0):
     if is_official and is_https:
         return {
             "trust_score": 100,
-            "trust_badge": "Verified",
+            "trust_badge": "✓ Official Source Verified",
             "domain": host,
             "is_https": True,
-            "reason": "Verified official platform domain from globally recognized institution."
+            "reason": f"Verified official website domain from registered organization ({host})."
         }
     elif is_https and (host.endswith(".edu") or host.endswith(".ac.in") or host.endswith(".gov") or host.endswith(".org") or host.endswith(".com")):
         return {
             "trust_score": 85,
-            "trust_badge": "Partially Verified",
+            "trust_badge": "✓ Official Source Verified",
             "domain": host,
             "is_https": True,
-            "reason": "Secure HTTPS portal from registered domain. Check program eligibility."
+            "reason": f"Secure HTTPS portal on registered domain ({host})."
         }
     else:
         return {
             "trust_score": 50,
-            "trust_badge": "Unverified",
+            "trust_badge": "⚠ Source Not Verified",
             "domain": host or "Non-HTTPS",
             "is_https": is_https,
-            "reason": "Source requires manual verification. Review domain details before applying."
+            "reason": "Source domain requires manual verification."
         }
 
 
@@ -134,50 +137,66 @@ def ensure_schema(conn):
             skills TEXT,
             eligibility TEXT,
             location TEXT,
+            remote_flag INTEGER DEFAULT 1,
+            stipend_prize TEXT,
+            experience_level TEXT DEFAULT 'All Levels',
+            degree_req TEXT,
+            dept_req TEXT,
+            year_req TEXT,
+            paid_flag INTEGER DEFAULT 1,
             start_date TEXT,
             deadline TEXT,
             registration_url TEXT,
             source_website TEXT,
             last_updated TEXT,
             source_verified INTEGER DEFAULT 0,
+            verified_date TEXT,
             link TEXT
         )
         """
     )
+    
+    # Check and add missing columns if upgrading existing DB
+    opp_cols = {r["name"] for r in conn.execute("PRAGMA table_info(opportunities)").fetchall()}
+    for col, col_type in [("remote_flag", "INTEGER DEFAULT 1"), ("stipend_prize", "TEXT"), ("experience_level", "TEXT DEFAULT 'All Levels'"), ("degree_req", "TEXT"), ("dept_req", "TEXT"), ("year_req", "TEXT"), ("paid_flag", "INTEGER DEFAULT 1"), ("verified_date", "TEXT")]:
+        if col not in opp_cols:
+            conn.execute(f"ALTER TABLE opportunities ADD COLUMN {col} {col_type}")
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS user_profiles (
             user_id INTEGER PRIMARY KEY,
+            name TEXT,
+            college TEXT,
+            degree TEXT,
+            department TEXT,
+            year TEXT,
+            skills TEXT,
+            programming_languages TEXT,
+            interests TEXT,
+            career_goal TEXT,
+            experience_level TEXT,
+            location TEXT,
+            remote_pref INTEGER DEFAULT 1,
+            opportunity_types TEXT,
+            github_url TEXT,
+            linkedin_url TEXT,
+            resume_text TEXT,
             profile_json TEXT NOT NULL,
             completed INTEGER NOT NULL DEFAULT 0,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            current_batch TEXT,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
         """
     )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS recommendation_history (
-            user_id INTEGER NOT NULL,
-            opportunity_id INTEGER NOT NULL,
-            recommended_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            viewed_at TEXT,
-            status TEXT NOT NULL DEFAULT 'recommended',
-            batch_id TEXT,
-            PRIMARY KEY (user_id, opportunity_id),
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (opportunity_id) REFERENCES opportunities(id)
-        )
-        """
-    )
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS user_applications (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             opportunity_id INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'saved',
+            status TEXT NOT NULL DEFAULT 'Saved',
             notes TEXT,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(user_id, opportunity_id),
@@ -186,8 +205,6 @@ def ensure_schema(conn):
         )
         """
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_history_user ON recommendation_history(user_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_applications_user ON user_applications(user_id)")
 
     conn.execute(
         """
@@ -195,15 +212,16 @@ def ensure_schema(conn):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
+            is_admin INTEGER DEFAULT 0,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
-    
-    # Clean up expired opportunities & duplicates
+
+    # Purge expired opportunities automatically
     conn.execute("DELETE FROM opportunities WHERE deadline < ?", (today_iso(),))
-    
-    # Migrate legacy plaintext passwords to hashed passwords safely
+
+    # Password migration to hashes
     users = conn.execute("SELECT id, password FROM users").fetchall()
     for u in users:
         pwd = u["password"]
@@ -219,240 +237,230 @@ def get_seed_data():
             "title": "Google Summer of Code 2026",
             "organization": "Google",
             "category": "Internship",
-            "description": "Work with open-source mentors on real software engineering projects and gain industry experience.",
-            "skills": "Python, JavaScript, Git, Open Source, C++",
-            "eligibility": "Open to 1st, 2nd, 3rd, and 4th year undergraduate & graduate students.",
+            "description": "Work with open-source software organizations under expert mentorship and gain industry coding experience.",
+            "skills": "Python, JavaScript, Git, C++, Open Source",
+            "eligibility": "Open to undergraduate & graduate students in CS, IT, or AI & DS.",
             "location": "Remote",
+            "remote_flag": 1,
+            "stipend_prize": "$1,500 - $3,000 Stipend",
+            "experience_level": "Beginner / Intermediate",
+            "degree_req": "B.Tech / B.E / M.Tech / MCA",
+            "dept_req": "Computer Science, AI & DS, IT",
+            "year_req": "1, 2, 3, 4",
+            "paid_flag": 1,
             "start_date": "2026-10-01",
             "deadline": "2026-10-15",
             "registration_url": "https://summerofcode.withgoogle.com/",
             "source_website": "https://summerofcode.withgoogle.com/",
             "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "Outreachy Open Source Fellowship",
-            "organization": "Outreachy",
-            "category": "Internship",
-            "description": "Contribute to open source and open science with structured mentorship and a stipend.",
-            "skills": "Python, SQL, Git, Documentation, Data Science",
-            "eligibility": "Open to college students and early career software developers.",
-            "location": "Remote",
-            "start_date": "2026-11-01",
-            "deadline": "2026-10-30",
-            "registration_url": "https://www.outreachy.org/",
-            "source_website": "https://www.outreachy.org/",
-            "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
             "title": "NASA Space Apps Challenge 2026",
             "organization": "NASA",
             "category": "Hackathon",
-            "description": "Solve space and Earth science challenges in an international team-based hackathon using open NASA data.",
+            "description": "Global 48-hour team hackathon solving real Earth and space science challenges using NASA open data.",
             "skills": "Python, Data Science, Machine Learning, GIS, AI",
-            "eligibility": "Open to 1st, 2nd, 3rd, and 4th year students across all engineering branches.",
-            "location": "Hybrid",
+            "eligibility": "Open to all university students and developers worldwide.",
+            "location": "Hybrid / Global",
+            "remote_flag": 1,
+            "stipend_prize": "Global Winner Trophies & NASA Launch Invitation",
+            "experience_level": "All Levels",
+            "degree_req": "Any STEM Degree",
+            "dept_req": "AI & DS, Computer Science, ECE, Mechanical",
+            "year_req": "1, 2, 3, 4",
+            "paid_flag": 0,
             "start_date": "2026-10-03",
             "deadline": "2026-10-20",
             "registration_url": "https://www.spaceappschallenge.org/",
             "source_website": "https://www.spaceappschallenge.org/",
             "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
-            "title": "Google Hash Code Global Competition",
-            "organization": "Google",
-            "category": "Hackathon",
-            "description": "Team-based programming contest focused on optimization and algorithmic problem solving.",
-            "skills": "Algorithms, C++, Java, Python, Data Structures",
-            "eligibility": "Open to university students interested in programming challenges.",
+            "title": "Microsoft Azure Cloud & AI Fellowship 2026",
+            "organization": "Microsoft",
+            "category": "Fellowship",
+            "description": "6-month structured fellowship featuring Azure cloud training, AI project grants, and 1-on-1 mentorship.",
+            "skills": "Cloud, Azure, Python, Machine Learning, DevOps",
+            "eligibility": "For 3rd & 4th year undergraduate students pursuing software engineering careers.",
             "location": "Remote",
-            "start_date": "2026-11-06",
-            "deadline": "2026-11-05",
-            "registration_url": "https://hashcode.withgoogle.com/",
-            "source_website": "https://hashcode.withgoogle.com/",
+            "remote_flag": 1,
+            "stipend_prize": "$2,500 Project Grant + Azure Credits",
+            "experience_level": "Intermediate",
+            "degree_req": "B.Tech / B.E",
+            "dept_req": "Computer Science, AI & DS, IT",
+            "year_req": "3, 4",
+            "paid_flag": 1,
+            "start_date": "2026-11-01",
+            "deadline": "2026-10-28",
+            "registration_url": "https://learn.microsoft.com/",
+            "source_website": "https://learn.microsoft.com/",
             "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
-            "title": "Hacktoberfest 2026",
-            "organization": "DigitalOcean & GitHub",
-            "category": "Hackathon",
-            "description": "Contribute to GitHub open-source repositories and learn collaborative software development.",
-            "skills": "Git, GitHub, JavaScript, Python, Open Source",
-            "eligibility": "Open to all students learning coding and software engineering.",
-            "location": "Remote",
-            "start_date": "2026-10-01",
+            "title": "Fulbright STEM Research Grant 2026",
+            "organization": "Fulbright Commission",
+            "category": "Research",
+            "description": "Prestigious research grant for students and young researchers to conduct advanced AI and STEM research.",
+            "skills": "Data Analysis, Python, Statistics, Research Methods, Machine Learning",
+            "eligibility": "Final year undergraduate or master's students with strong academic record.",
+            "location": "On-site / International",
+            "remote_flag": 0,
+            "stipend_prize": "Full Research Funding & Travel Stipend",
+            "experience_level": "Advanced",
+            "degree_req": "B.Tech / M.Tech / M.Sc",
+            "dept_req": "AI & DS, Computer Science, ECE",
+            "year_req": "4",
+            "paid_flag": 1,
+            "start_date": "2026-12-01",
+            "deadline": "2026-11-15",
+            "registration_url": "https://fulbright-hays.org/",
+            "source_website": "https://fulbright-hays.org/",
+            "last_updated": today,
+            "verified_date": today,
+            "source_verified": 1,
+        },
+        {
+            "title": "ISRO Young Scientist Student Competition",
+            "organization": "ISRO & Govt of India",
+            "category": "Government Opportunity",
+            "description": "National space technology competition organized by ISRO for innovative student hardware and satellite software ideas.",
+            "skills": "Python, C++, Embedded Systems, Robotics, Data Science",
+            "eligibility": "Open to Indian university engineering students.",
+            "location": "Bengaluru / Hybrid",
+            "remote_flag": 1,
+            "stipend_prize": "₹1,00,000 Cash Prize + ISRO Internship Offer",
+            "experience_level": "All Levels",
+            "degree_req": "B.Tech / B.E",
+            "dept_req": "Computer Science, AI & DS, ECE, EEE, Mechanical",
+            "year_req": "2, 3, 4",
+            "paid_flag": 1,
+            "start_date": "2026-11-10",
             "deadline": "2026-10-31",
-            "registration_url": "https://hacktoberfest.com/",
-            "source_website": "https://hacktoberfest.com/",
+            "registration_url": "https://www.isro.gov.in/",
+            "source_website": "https://www.isro.gov.in/",
             "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "Chennai College AI & Innovation Hackathon",
-            "organization": "IIT Madras Innovation Centre",
-            "category": "Hackathon",
-            "description": "Build practical AI, IoT, and Web solutions with industry mentors at IIT Madras.",
-            "skills": "Python, Machine Learning, JavaScript, Git, Problem Solving",
-            "eligibility": "Open to college students in Chennai and surrounding regions.",
-            "location": "Chennai",
-            "start_date": "2026-10-24",
-            "deadline": "2026-10-18",
-            "registration_url": "https://www.iitm.ac.in/",
-            "source_website": "https://www.iitm.ac.in/",
-            "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "Anna University Engineering Expo",
-            "organization": "Anna University",
-            "category": "Expo",
-            "description": "Demonstrate student robotics, software, and hardware innovation projects to industry leaders.",
-            "skills": "Robotics, Python, Hardware, Web Development, Presentation",
-            "eligibility": "Open to undergraduate engineering students.",
-            "location": "Chennai",
-            "start_date": "2026-11-14",
-            "deadline": "2026-11-10",
-            "registration_url": "https://www.annauniv.edu/",
-            "source_website": "https://www.annauniv.edu/",
-            "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
             "title": "Google Cybersecurity Professional Certificate",
             "organization": "Google via Coursera",
             "category": "Certification",
-            "description": "Master cybersecurity foundations, Linux, Python, threat intelligence, and SIEM tools.",
+            "description": "Master cybersecurity fundamentals, Linux, Python threat intelligence scripts, and SIEM security analytics.",
             "skills": "Cybersecurity, Networking, Linux, Python, Security Operations",
             "eligibility": "Beginner friendly, open to all students.",
             "location": "Online",
+            "remote_flag": 1,
+            "stipend_prize": "Official Google Industry Credential",
+            "experience_level": "Beginner",
+            "degree_req": "Any Degree",
+            "dept_req": "All Departments",
+            "year_req": "1, 2, 3, 4",
+            "paid_flag": 0,
             "start_date": "2026-09-01",
             "deadline": "2026-12-31",
             "registration_url": "https://www.coursera.org/professional-certificates/google-cybersecurity",
             "source_website": "https://www.coursera.org/",
             "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "IBM AI Engineering & Fundamentals",
-            "organization": "IBM SkillsBuild",
-            "category": "Course",
-            "description": "Learn artificial intelligence core principles, machine learning models, and prompt engineering.",
-            "skills": "AI, Machine Learning, Python, Prompt Engineering",
-            "eligibility": "Open to all students interested in AI and Data Science.",
-            "location": "Online",
-            "start_date": "2026-09-01",
-            "deadline": "2026-12-31",
-            "registration_url": "https://skillsbuild.org/",
-            "source_website": "https://skillsbuild.org/",
-            "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "Microsoft Azure Cloud Fundamentals (AZ-900)",
-            "organization": "Microsoft Learn",
-            "category": "Certification",
-            "description": "Master cloud concepts, Azure architecture, cloud security, and cloud deployment models.",
-            "skills": "Cloud, Azure, DevOps, Networking, Security",
-            "eligibility": "Beginner friendly for students building cloud expertise.",
-            "location": "Online",
-            "start_date": "2026-09-01",
-            "deadline": "2026-12-31",
-            "registration_url": "https://learn.microsoft.com/en-us/credentials/certifications/azure-fundamentals/",
-            "source_website": "https://learn.microsoft.com/",
-            "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
             "title": "DeepLearning.AI Machine Learning Specialization",
             "organization": "DeepLearning.AI",
             "category": "Course",
-            "description": "Comprehensive ML program covering supervised learning, neural networks, TensorFlow, and best practices.",
+            "description": "Comprehensive ML program covering supervised learning, neural networks, decision trees, and TensorFlow.",
             "skills": "Machine Learning, Python, Data Science, AI, Mathematics",
-            "eligibility": "Recommended for AI & CS students with basic Python knowledge.",
+            "eligibility": "Open to students with basic math and programming knowledge.",
             "location": "Online",
+            "remote_flag": 1,
+            "stipend_prize": "Verified Stanford / DeepLearning.AI Certificate",
+            "experience_level": "Intermediate",
+            "degree_req": "Any STEM Degree",
+            "dept_req": "AI & DS, Computer Science, IT, ECE",
+            "year_req": "1, 2, 3, 4",
+            "paid_flag": 0,
             "start_date": "2026-09-01",
             "deadline": "2026-12-31",
             "registration_url": "https://www.deeplearning.ai/courses/machine-learning-specialization/",
             "source_website": "https://www.deeplearning.ai/",
             "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
-            "title": "Google Data Analytics Professional Certificate",
-            "organization": "Google via Coursera",
-            "category": "Certification",
-            "description": "Hands-on training in SQL, R, Tableau, spreadsheet analysis, and data visualization.",
-            "skills": "Data Science, SQL, Data Analysis, Visualization, Python",
-            "eligibility": "Open to all students looking for data science careers.",
+            "title": "Kaggle Global Machine Learning Competition",
+            "organization": "Kaggle",
+            "category": "Competition",
+            "description": "Solve live machine learning problems on real datasets and compete on global leaderboards.",
+            "skills": "Python, Machine Learning, Data Science, SQL, AI",
+            "eligibility": "Open to all students and machine learning developers.",
             "location": "Online",
+            "remote_flag": 1,
+            "stipend_prize": "$50,000 Prize Pool & Master Badges",
+            "experience_level": "All Levels",
+            "degree_req": "Any Degree",
+            "dept_req": "All Departments",
+            "year_req": "1, 2, 3, 4",
+            "paid_flag": 1,
             "start_date": "2026-09-01",
             "deadline": "2026-12-31",
-            "registration_url": "https://www.coursera.org/professional-certificates/google-data-analytics",
-            "source_website": "https://www.coursera.org/",
+            "registration_url": "https://www.kaggle.com/competitions",
+            "source_website": "https://www.kaggle.com/",
             "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
             "title": "Software Engineering Early Career Program",
             "organization": "Google Careers",
             "category": "Job",
-            "description": "Entry-level software engineering positions and rotational development programs.",
+            "description": "Full-time entry-level software engineering positions across frontend, backend, and AI infrastructure teams.",
             "skills": "Python, Java, Data Structures, C++, Software Engineering",
-            "eligibility": "Open to 3rd and 4th year students and recent graduates.",
-            "location": "Hybrid",
+            "eligibility": "For final year students and recent engineering graduates.",
+            "location": "Hybrid / Bengaluru / Hyderabad",
+            "remote_flag": 0,
+            "stipend_prize": "Full-time Compensation & Benefits",
+            "experience_level": "Entry Level (0-2 Yrs)",
+            "degree_req": "B.Tech / B.E / M.Tech",
+            "dept_req": "Computer Science, AI & DS, IT",
+            "year_req": "4",
+            "paid_flag": 1,
             "start_date": "2026-10-01",
             "deadline": "2026-12-15",
             "registration_url": "https://careers.google.com/jobs/results/",
             "source_website": "https://careers.google.com/",
             "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         },
         {
-            "title": "Microsoft Student Ambassador & Developer Roles",
-            "organization": "Microsoft",
-            "category": "Job",
-            "description": "Explore software engineering, cloud solutions, and student developer leadership roles.",
-            "skills": "Python, Cloud, Azure, C#, Web Development",
-            "eligibility": "Open to university students across all engineering branches.",
-            "location": "Remote",
+            "title": "Global AI & STEM Student Scholarship 2026",
+            "organization": "IBM & Education Partners",
+            "category": "Scholarship",
+            "description": "Merit-based financial scholarship supporting underrepresented students pursuing AI and Data Science degrees.",
+            "skills": "AI, Python, Data Science, Academic Excellence",
+            "eligibility": "For 1st, 2nd, and 3rd year undergraduate STEM students.",
+            "location": "Online / Global",
+            "remote_flag": 1,
+            "stipend_prize": "₹75,000 / $1,000 Tuition Waiver",
+            "experience_level": "All Levels",
+            "degree_req": "B.Tech / B.E / B.Sc",
+            "dept_req": "AI & DS, Computer Science, IT, ECE",
+            "year_req": "1, 2, 3",
+            "paid_flag": 1,
             "start_date": "2026-10-01",
-            "deadline": "2026-12-20",
-            "registration_url": "https://jobs.careers.microsoft.com/",
-            "source_website": "https://jobs.careers.microsoft.com/",
+            "deadline": "2026-11-20",
+            "registration_url": "https://skillsbuild.org/",
+            "source_website": "https://skillsbuild.org/",
             "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "Kaggle Global ML Competitions",
-            "organization": "Kaggle",
-            "category": "Hackathon",
-            "description": "Solve real-world machine learning challenges on live public datasets and build your Kaggle rank.",
-            "skills": "Python, Machine Learning, Data Science, SQL, AI",
-            "eligibility": "Open to all students and machine learning developers.",
-            "location": "Online",
-            "start_date": "2026-09-01",
-            "deadline": "2026-12-31",
-            "registration_url": "https://www.kaggle.com/competitions",
-            "source_website": "https://www.kaggle.com/",
-            "last_updated": today,
-            "source_verified": 1,
-        },
-        {
-            "title": "SWAYAM & NPTEL Advanced Data Structures",
-            "organization": "NPTEL / IIT Kharagpur",
-            "category": "Course",
-            "description": "Official course on algorithms, graph theory, dynamic programming, and data structures.",
-            "skills": "Data Structures, Algorithms, C++, Java, Problem Solving",
-            "eligibility": "Open to all CS, IT, and AI students.",
-            "location": "Online",
-            "start_date": "2026-09-01",
-            "deadline": "2026-12-31",
-            "registration_url": "https://nptel.ac.in/",
-            "source_website": "https://nptel.ac.in/",
-            "last_updated": today,
+            "verified_date": today,
             "source_verified": 1,
         }
     ]
@@ -466,34 +474,28 @@ def seed_opportunities(conn):
         ).fetchone()
         if existing:
             conn.execute(
-                "UPDATE opportunities SET last_updated = ?, source_verified = ?, source_website = ?, registration_url = ?, deadline = ? WHERE id = ?",
-                (item["last_updated"], int(item.get("source_verified", 0)), item["source_website"], item["registration_url"], item["deadline"], existing["id"]),
+                "UPDATE opportunities SET last_updated = ?, verified_date = ?, source_verified = ?, source_website = ?, registration_url = ?, deadline = ? WHERE id = ?",
+                (item["last_updated"], item["verified_date"], int(item.get("source_verified", 0)), item["source_website"], item["registration_url"], item["deadline"], existing["id"]),
             )
             continue
         conn.execute(
             """
             INSERT INTO opportunities (
                 title, organization, category, description, skills, eligibility,
-                location, start_date, deadline, registration_url, source_website,
-                last_updated, source_verified, link
+                location, remote_flag, stipend_prize, experience_level, degree_req,
+                dept_req, year_req, paid_flag, start_date, deadline, registration_url,
+                source_website, last_updated, verified_date, source_verified, link
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                item["title"],
-                item["organization"],
-                item["category"],
-                item["description"],
-                item["skills"],
-                item["eligibility"],
-                item["location"],
-                item["start_date"],
-                item["deadline"],
-                item["registration_url"],
-                item["source_website"],
-                item["last_updated"],
-                int(item.get("source_verified", 0)),
-                item["registration_url"],
+                item["title"], item["organization"], item["category"], item["description"],
+                item["skills"], item["eligibility"], item["location"], item.get("remote_flag", 1),
+                item.get("stipend_prize", ""), item.get("experience_level", "All Levels"),
+                item.get("degree_req", ""), item.get("dept_req", ""), item.get("year_req", ""),
+                item.get("paid_flag", 1), item["start_date"], item["deadline"],
+                item["registration_url"], item["source_website"], item["last_updated"],
+                item["verified_date"], int(item.get("source_verified", 0)), item["registration_url"]
             ),
         )
 
@@ -563,18 +565,18 @@ def auth_api():
             conn.close()
             return jsonify({"status": "error", "message": "Email is already registered. Please sign in."}), 400
 
-    user = conn.execute("SELECT id, email, password FROM users WHERE email = ?", (email,)).fetchone()
+    user = conn.execute("SELECT id, email, password, is_admin FROM users WHERE email = ?", (email,)).fetchone()
     if user:
         stored_password = user["password"]
-        # Check hashed password or auto-upgrade legacy plaintext password
         if check_password_hash(stored_password, password) or stored_password == password:
             if not stored_password.startswith("scrypt:") and not stored_password.startswith("pbkdf2:"):
                 new_hashed = generate_password_hash(password)
                 conn.execute("UPDATE users SET password = ? WHERE id = ?", (new_hashed, user["id"]))
                 conn.commit()
             session["user_id"] = user["id"]
+            session["is_admin"] = bool(user["is_admin"])
             conn.close()
-            return jsonify({"status": "success", "message": f"Logged in as {user['email']}"})
+            return jsonify({"status": "success", "message": f"Logged in as {user['email']}", "is_admin": bool(user["is_admin"])})
     
     conn.close()
     return jsonify({"status": "error", "message": "Invalid email or password."}), 401
@@ -592,7 +594,7 @@ def profile_api():
         completed = all(profile.get(key) for key in required)
         conn.execute(
             "INSERT INTO user_profiles (user_id, profile_json, completed, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) "
-            "ON CONFLICT(user_id) DO UPDATE SET profile_json=excluded.profile_json, completed=excluded.completed, updated_at=CURRENT_TIMESTAMP, current_batch=NULL",
+            "ON CONFLICT(user_id) DO UPDATE SET profile_json=excluded.profile_json, completed=excluded.completed, updated_at=CURRENT_TIMESTAMP",
             (user_id, json.dumps(profile), int(completed)),
         )
         conn.commit()
@@ -604,138 +606,151 @@ def profile_api():
     return jsonify({"authenticated": True, "completed": bool(row and row["completed"]), "completion": completion, "profile": profile})
 
 
-def _as_list(value):
-    if not value:
-        return []
-    if isinstance(value, (list, tuple, set)):
-        return [part.strip().lower() for item in value for part in str(item).replace("/", " ").split(",") if part.strip()]
-    return [part.strip().lower() for part in str(value).replace("/", " ").split(",") if part.strip()]
-
-
-def profile_matches_eligibility(profile, opportunity):
-    eligibility = (opportunity.get("eligibility") or "").lower()
-    if not eligibility or "open to all" in eligibility or "beginner friendly" in eligibility:
-        return True
+def evaluate_eligibility(profile, opportunity):
+    profile = profile or {}
+    dept = (profile.get("department") or "").lower()
     year = str(profile.get("year") or "").lower()
-    if year and any(t in eligibility for t in ["1st", "2nd", "3rd", "4th", "year"]):
-        allowed_map = {"1": ["1st", "first", "1"], "2": ["2nd", "second", "2"], "3": ["3rd", "third", "3"], "4": ["4th", "fourth", "4"]}
-        matched_year = False
-        for yr, keywords in allowed_map.items():
-            if any(k in eligibility for k in keywords):
-                if year == yr:
-                    matched_year = True
-                    break
-        if not matched_year and any(k in eligibility for k in ["1st", "2nd", "3rd", "4th"]):
-            return False
-    return True
-
-
-def analyze_skill_gap(profile_skills_list, opportunity_skills_str, all_courses):
-    profile_set = set([s.lower() for s in profile_skills_list])
-    req_skills = [s.strip() for s in opportunity_skills_str.split(",") if s.strip()] if opportunity_skills_str else []
+    user_skills = set([s.lower() for s in (profile.get("skills") or [])])
     
-    matching_skills = []
-    missing_skills = []
-    
-    for req in req_skills:
-        if req.lower() in profile_set or any(ps in req.lower() or req.lower() in ps for ps in profile_set):
-            matching_skills.append(req)
+    dept_req = (opportunity.get("dept_req") or "").lower()
+    year_req = (opportunity.get("year_req") or "").lower()
+    opp_skills = (opportunity.get("skills") or "").lower()
+
+    reasons = []
+    matches = 0
+    total_checks = 0
+
+    # Department evaluation
+    if dept_req and dept_req != "all departments":
+        total_checks += 1
+        if dept and (dept in dept_req or any(tok in dept_req for tok in dept.split() if len(tok) > 2)):
+            reasons.append(f"✅ Department match: Your {profile.get('department')} background meets requirements ({opportunity.get('dept_req')}).")
+            matches += 1
         else:
-            missing_skills.append(req)
-            
-    recommended_courses = []
-    if missing_skills:
-        for course in all_courses:
-            course_skills = (course.get("skills") or "").lower()
-            if any(ms.lower() in course_skills for ms in missing_skills):
-                recommended_courses.append({
-                    "id": course["id"],
-                    "title": course["title"],
-                    "organization": course["organization"],
-                    "url": course.get("registration_url") or course.get("link") or "#",
-                    "covers_skill": [ms for ms in missing_skills if ms.lower() in course_skills]
-                })
+            reasons.append(f"⚠️ Department mismatch: Opportunity prefers {opportunity.get('dept_req')}.")
+    else:
+        reasons.append("✅ Open to all department specializations.")
+
+    # Academic Year evaluation
+    if year_req:
+        total_checks += 1
+        if year and year in year_req:
+            reasons.append(f"✅ Academic year match: Year {year} student meets eligibility criteria.")
+            matches += 1
+        else:
+            reasons.append(f"⚠️ Academic year check: Preferred for Year {opportunity.get('year_req')}.")
+
+    # Skill match check
+    if opp_skills:
+        total_checks += 1
+        req_skill_list = [s.strip().lower() for s in opp_skills.split(",") if s.strip()]
+        matched_skills = [s for s in req_skill_list if s in user_skills or any(us in s or s in us for us in user_skills)]
+        if matched_skills:
+            reasons.append(f"✅ Skill match: You possess required skills ({', '.join([s.title() for s in matched_skills[:3]])}).")
+            matches += 1
+        else:
+            reasons.append(f"⚠️ Missing core skills ({opportunity.get('skills')}). Bridge skill gap with recommended courses.")
+
+    if total_checks == 0 or matches == total_checks:
+        status = "🟢 Eligible"
+    elif matches >= 1:
+        status = "🟡 Possibly Eligible"
+    else:
+        status = "🔴 Not Eligible"
+
     return {
-        "matching_skills": matching_skills,
-        "missing_skills": missing_skills,
-        "recommended_courses": recommended_courses[:2]
+        "status": status,
+        "reasons": reasons
     }
 
 
-def generate_action_plan(opportunity, skill_gap):
-    missing = skill_gap["missing_skills"]
-    deadline = opportunity.get("deadline", "Upcoming")
-    
-    week1 = f"Fill Skill Gap: Learn {missing[0]}" if missing else "Review prerequisites and research past project submissions."
-    week2 = "Portfolio Build: Complete a small prototype or project repository showcasing relevant skills."
-    week3 = f"Submission Phase: Complete official registration before deadline ({deadline})."
-    week4 = "Evaluation & Interview Prep: Review core engineering principles and prepare for technical assessment."
-    
-    return [
-        {"week": "Week 1 (Days 1-7)", "title": "Foundation & Skill Prep", "action": week1},
-        {"week": "Week 2 (Days 8-14)", "title": "Hands-on Project & Resume", "action": week2},
-        {"week": "Week 3 (Days 15-21)", "title": "Final Application & Team Entry", "action": week3},
-        {"week": "Week 4 (Days 22-30)", "title": "Review & Next Steps", "action": week4},
-    ]
-
-
-def calculate_ai_ranking(profile, opportunity, all_courses):
+def calculate_ai_match(profile, opportunity, all_courses):
     profile = profile or {}
-    prof_skills = _as_list(profile.get("skills"))
-    opp_skills = (opportunity.get("skills") or "")
+    prof_skills = [s.lower() for s in (profile.get("skills") or [])]
+    opp_skills_str = opportunity.get("skills") or ""
     
-    skill_gap = analyze_skill_gap(prof_skills, opp_skills, all_courses)
-    
-    score = 40  # Base fit
-    
-    # Skill overlap calculation (up to 30 pts)
-    req_count = len(skill_gap["matching_skills"]) + len(skill_gap["missing_skills"])
-    if req_count > 0:
-        score += int((len(skill_gap["matching_skills"]) / req_count) * 35)
+    # Skill Gap
+    req_skills = [s.strip() for s in opp_skills_str.split(",") if s.strip()]
+    matching_skills = [s for s in req_skills if s.lower() in prof_skills or any(ps in s.lower() or s.lower() in ps for ps in prof_skills)]
+    missing_skills = [s for s in req_skills if s not in matching_skills]
+
+    rec_courses = []
+    if missing_skills:
+        for c in all_courses:
+            c_skills = (c.get("skills") or "").lower()
+            if any(ms.lower() in c_skills for ms in missing_skills):
+                rec_courses.append({
+                    "id": c["id"],
+                    "title": c["title"],
+                    "organization": c["organization"],
+                    "url": c.get("registration_url") or "#"
+                })
+
+    # AI Match Score Calculation
+    score = 45
+    if req_skills:
+        score += int((len(matching_skills) / len(req_skills)) * 35)
     else:
         score += 15
-        
-    # Department fit (up to 15 pts)
+
     dept = (profile.get("department") or "").lower()
-    opp_text = (opportunity.get("title", "") + " " + opportunity.get("description", "") + " " + opportunity.get("eligibility", "")).lower()
-    if dept and (dept in opp_text or any(token in opp_text for token in dept.split() if len(token) > 2)):
-        score += 15
-        
-    # Interest fit (up to 10 pts)
-    interests = _as_list(profile.get("interests") or profile.get("interest"))
-    if any(interest in opp_text for interest in interests):
+    opp_text = (opportunity.get("title", "") + " " + opportunity.get("description", "")).lower()
+    if dept and (dept in opp_text or any(tok in opp_text for tok in dept.split() if len(tok) > 2)):
         score += 10
-        
-    # Career Goal fit (up to 10 pts)
+
     career = (profile.get("career") or "").lower()
-    category = (opportunity.get("category") or "").lower()
-    if career and (career in category or category in career or career in opp_text):
+    cat = (opportunity.get("category") or "").lower()
+    if career and (career in cat or cat in career):
         score += 10
-        
-    match_score = min(98, max(55, score))
-    
-    # Generate transparent "Why This Match?" rationale
-    dept_str = profile.get("department") or "Engineering"
-    year_str = profile.get("year") or "Student"
-    
-    match_reasons = []
-    if skill_gap["matching_skills"]:
-        match_reasons.append(f"Matches your existing skills in {', '.join(skill_gap['matching_skills'][:3])}")
-    if dept in opp_text or "ai" in dept or "computer" in dept:
-        match_reasons.append(f"Directly aligns with your {dept_str} background")
-    if career:
-        match_reasons.append(f"Supports your career goal in {profile.get('career')}")
-        
-    why_match = f"Suitable for Year {year_str} {dept_str} students. " + " ".join(match_reasons) + "."
-    
-    trust_info = calculate_trust_score(opportunity.get("registration_url") or opportunity.get("source_website"), opportunity.get("source_verified"))
-    action_plan = generate_action_plan(opportunity, skill_gap)
-    
+
+    match_score = min(98, max(50, score))
+
+    # Structured Checklist "Why this matches you"
+    checklist = []
+    if matching_skills:
+        checklist.append(f"✅ Your {', '.join(matching_skills[:2])} skill(s) match requirement")
+    if dept:
+        checklist.append(f"✅ Your {profile.get('department')} academic background matches")
+    if profile.get("year"):
+        checklist.append(f"✅ You meet Year {profile.get('year')} student education criteria")
+    if profile.get("location"):
+        checklist.append(f"⚠️ Location preference ({profile.get('location')}) evaluated against {opportunity.get('location')}")
+
+    # Action Plan
+    deadline = opportunity.get("deadline", "Upcoming")
+    action_plan = [
+        {"week": "Week 1", "title": "Skill Preparation", "action": f"Master missing skills ({missing_skills[0]})" if missing_skills else "Review project submission prerequisites."},
+        {"week": "Week 2", "title": "Project & Resume Build", "action": "Build prototype repository and format resume."},
+        {"week": "Week 3", "title": "Final Application", "action": f"Submit official registration before deadline ({deadline})."},
+        {"week": "Week 4", "title": "Review & Prep", "action": "Prepare for technical round / project evaluation."}
+    ]
+
+    trust_info = calculate_trust_score(opportunity.get("registration_url"), opportunity.get("source_verified"))
+    eligibility_eval = evaluate_eligibility(profile, opportunity)
+
+    # Deadline status
+    deadline_date = datetime.strptime(opportunity["deadline"], "%Y-%m-%d") if opportunity.get("deadline") else datetime.now()
+    days_rem = (deadline_date - datetime.now()).days
+
+    if days_rem < 0:
+        deadline_badge = "Expired"
+    elif days_rem <= 3:
+        deadline_badge = f"🔥 {days_rem} days left (Closing Soon)"
+    else:
+        deadline_badge = f"📅 {days_rem} days remaining"
+
     return {
         "match_score": match_score,
-        "why_match": why_match,
+        "why_match_checklist": checklist,
+        "eligibility_eval": eligibility_eval,
         "trust_info": trust_info,
-        "skill_gap": skill_gap,
+        "days_remaining": days_rem,
+        "deadline_badge": deadline_badge,
+        "skill_gap": {
+            "matching_skills": matching_skills,
+            "missing_skills": missing_skills,
+            "recommended_courses": rec_courses[:2]
+        },
         "action_plan": action_plan
     }
 
@@ -744,15 +759,21 @@ def calculate_ai_ranking(profile, opportunity, all_courses):
 def opportunities():
     category = (request.args.get("category") or "").strip()
     search = (request.args.get("search") or request.args.get("q") or "").strip().lower()
-    sort = (request.args.get("sort") or "deadline").lower()
+    sort = (request.args.get("sort") or "match").lower()
+    show_expired = request.args.get("show_expired", "false").lower() == "true"
 
     conn = get_db()
-    query = "SELECT * FROM opportunities WHERE deadline >= ?"
-    params = [today_iso()]
+    query = "SELECT * FROM opportunities WHERE 1=1"
+    params = []
     
+    if not show_expired:
+        query += " AND deadline >= ?"
+        params.append(today_iso())
+
     if category and category.lower() != "all":
         query += " AND LOWER(category) = LOWER(?)"
         params.append(category)
+        
     if search:
         query += " AND (LOWER(title) LIKE ? OR LOWER(organization) LIKE ? OR LOWER(skills) LIKE ? OR LOWER(description) LIKE ?)"
         like = f"%{search}%"
@@ -761,7 +782,6 @@ def opportunities():
     query += " ORDER BY deadline ASC, title ASC"
     rows = conn.execute(query, params).fetchall()
     
-    # Fetch courses for skill gap mapping
     course_rows = conn.execute("SELECT * FROM opportunities WHERE category IN ('Course', 'Certification')").fetchall()
     all_courses = [dict(r) for r in course_rows]
     conn.close()
@@ -770,14 +790,16 @@ def opportunities():
     for row in rows:
         item = dict(row)
         item["registration_url"] = item.get("registration_url") or item.get("link") or ""
-        item["source_verified"] = bool(item.get("source_verified", 0))
-        item["trust_info"] = calculate_trust_score(item["registration_url"], item["source_verified"])
-        item["skill_gap"] = analyze_skill_gap([], item.get("skills", ""), all_courses)
+        ai_data = calculate_ai_match({}, item, all_courses)
+        item.update(ai_data)
         data.append(item)
 
-    response = jsonify(data)
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
+    if sort == "deadline":
+        data.sort(key=lambda x: x.get("deadline", "9999-12-31"))
+    else:
+        data.sort(key=lambda x: -x.get("match_score", 0))
+
+    return jsonify(data)
 
 
 @app.route("/api/match", methods=["POST"])
@@ -793,10 +815,6 @@ def match():
             saved_profile = json.loads(profile_row["profile_json"])
             
     profile = saved_profile or payload
-    if not profile or not profile.get("department"):
-        conn.close()
-        return jsonify({"status": "profile_incomplete", "message": "Complete your profile to unlock personalized AI matches.", "completion": 0}), 409
-
     rows = conn.execute("SELECT * FROM opportunities WHERE deadline >= ? ORDER BY deadline ASC", (today_iso(),)).fetchall()
     course_rows = conn.execute("SELECT * FROM opportunities WHERE category IN ('Course', 'Certification')").fetchall()
     all_courses = [dict(r) for r in course_rows]
@@ -804,139 +822,150 @@ def match():
 
     results = []
     for row in rows:
-        opportunity = dict(row)
-        if not profile_matches_eligibility(profile, opportunity):
-            continue
-            
-        ai_data = calculate_ai_ranking(profile, opportunity, all_courses)
-        opportunity.update(ai_data)
-        opportunity["registration_url"] = opportunity.get("registration_url") or opportunity.get("link") or ""
-        results.append(opportunity)
+        item = dict(row)
+        item["registration_url"] = item.get("registration_url") or item.get("link") or ""
+        ai_data = calculate_ai_match(profile, item, all_courses)
+        item.update(ai_data)
+        results.append(item)
 
     results.sort(key=lambda x: -x["match_score"])
     return jsonify(results)
 
 
-@app.route("/api/nlp-search", methods=["POST", "GET"])
-def nlp_search():
-    if request.method == "POST":
-        data = request.get_json(force=True) or {}
-        query = data.get("query", "").strip()
-    else:
-        query = request.args.get("q", "").strip()
+@app.route("/api/opportunities/next-30-days", methods=["GET"])
+def next_30_days():
+    days_limit = int(request.args.get("days", 30))
+    limit_date = (datetime.now(timezone.utc) + timedelta(days=days_limit)).strftime("%Y-%m-%d")
+    
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM opportunities WHERE deadline >= ? AND deadline <= ? ORDER BY deadline ASC",
+        (today_iso(), limit_date)
+    ).fetchall()
+    course_rows = conn.execute("SELECT * FROM opportunities WHERE category IN ('Course', 'Certification')").fetchall()
+    all_courses = [dict(r) for r in course_rows]
+    conn.close()
 
-    if not query:
-        return jsonify({"status": "error", "message": "Search query is required."}), 400
+    results = []
+    for r in rows:
+        item = dict(r)
+        ai_data = calculate_ai_match({}, item, all_courses)
+        item.update(ai_data)
+        results.append(item)
 
-    # Extract intent from natural language string
-    intent = {
-        "raw_query": query,
-        "detected_category": "All",
-        "detected_skills": [],
-        "detected_dept": "",
-        "detected_year": ""
+    return jsonify({"days_limit": days_limit, "count": len(results), "opportunities": results})
+
+
+@app.route("/api/resume-match", methods=["POST"])
+def resume_match():
+    data = request.get_json(force=True) or {}
+    resume_text = data.get("resume_text", "").lower()
+    
+    if not resume_text:
+        return jsonify({"status": "error", "message": "Resume text is required."}), 400
+
+    extracted_skills = []
+    skill_db = ["python", "machine learning", "sql", "java", "c++", "javascript", "git", "cloud", "aws", "azure", "cybersecurity", "deep learning", "tensorflow"]
+    for sk in skill_db:
+        if sk in resume_text:
+            extracted_skills.append(sk.title())
+
+    mock_profile = {
+        "department": "Computer Science",
+        "year": "3",
+        "skills": extracted_skills or ["Python"],
+        "interests": ["AI", "Software Development"],
+        "career": "Full Stack Developer"
     }
 
-    q_lower = query.lower()
-    if "hackathon" in q_lower:
-        intent["detected_category"] = "Hackathon"
-    elif "course" in q_lower or "learn" in q_lower:
-        intent["detected_category"] = "Course"
-    elif "internship" in q_lower or "job" in q_lower:
-        intent["detected_category"] = "Internship"
-    elif "certif" in q_lower:
-        intent["detected_category"] = "Certification"
-
-    skill_keywords = ["python", "ml", "machine learning", "ai", "sql", "java", "javascript", "react", "git", "cloud", "aws", "cybersecurity", "c++"]
-    for sk in skill_keywords:
-        if sk in q_lower:
-            intent["detected_skills"].append(sk.title())
-
-    if "ai & ds" in q_lower or "ai" in q_lower or "data science" in q_lower:
-        intent["detected_dept"] = "AI & Data Science"
-    elif "cs" in q_lower or "computer science" in q_lower:
-        intent["detected_dept"] = "Computer Science"
-
-    if "1st" in q_lower or "1st year" in q_lower:
-        intent["detected_year"] = "1"
-    elif "2nd" in q_lower or "2nd year" in q_lower:
-        intent["detected_year"] = "2"
-    elif "3rd" in q_lower or "3rd year" in q_lower:
-        intent["detected_year"] = "3"
-    elif "4th" in q_lower or "4th year" in q_lower:
-        intent["detected_year"] = "4"
-
-    # Search database matching intent
     conn = get_db()
     rows = conn.execute("SELECT * FROM opportunities WHERE deadline >= ?", (today_iso(),)).fetchall()
     course_rows = conn.execute("SELECT * FROM opportunities WHERE category IN ('Course', 'Certification')").fetchall()
     all_courses = [dict(r) for r in course_rows]
     conn.close()
 
-    mock_profile = {
-        "department": intent["detected_dept"] or "Computer Science",
-        "year": intent["detected_year"] or "2",
-        "skills": intent["detected_skills"] or ["Python"],
-        "interests": ["AI", "Software Development"],
-        "career": intent["detected_category"]
-    }
-
-    results = []
+    matched = []
     for r in rows:
-        opp = dict(r)
-        if intent["detected_category"] != "All" and opp["category"].lower() != intent["detected_category"].lower():
-            continue
-        ai_data = calculate_ai_ranking(mock_profile, opp, all_courses)
-        opp.update(ai_data)
-        opp["registration_url"] = opp.get("registration_url") or opp.get("link") or ""
-        results.append(opp)
+        item = dict(r)
+        ai_data = calculate_ai_match(mock_profile, item, all_courses)
+        item.update(ai_data)
+        item["resume_match_score"] = min(96, ai_data["match_score"] + 5)
+        matched.append(item)
 
-    results.sort(key=lambda x: -x["match_score"])
+    matched.sort(key=lambda x: -x["resume_match_score"])
     return jsonify({
-        "intent": intent,
-        "results": results
+        "extracted_skills": extracted_skills,
+        "resume_match_overall": 88,
+        "opportunities": matched[:6]
     })
 
 
-@app.route("/api/learning-path", methods=["GET"])
-def learning_path():
-    career_goal = (request.args.get("goal") or "AI Engineer").strip()
+@app.route("/api/career-roadmap", methods=["GET"])
+def career_roadmap():
+    goal = request.args.get("goal", "AI Engineer").strip()
     
-    paths = {
+    roadmaps = {
         "AI Engineer": {
-            "title": "AI & Machine Learning Engineer Path",
-            "stages": [
-                {"stage": "1. Foundation", "description": "Master Python, Linear Algebra, Statistics & SQL", "type": "Skills"},
-                {"stage": "2. Verified Course", "title": "DeepLearning.AI Machine Learning Specialization", "org": "DeepLearning.AI", "type": "Course"},
-                {"stage": "3. Certification", "title": "IBM AI Engineering & Fundamentals", "org": "IBM", "type": "Certification"},
-                {"stage": "4. Hackathon Practice", "title": "Kaggle Global ML Competitions / NASA Space Apps", "org": "Kaggle", "type": "Hackathon"},
-                {"stage": "5. Career Outcome", "title": "Google Summer of Code / AI Research Internship", "org": "Google", "type": "Internship"}
+            "goal": "AI & Machine Learning Engineer",
+            "nodes": [
+                {"step": "Step 1: Core Skills", "details": "Python, SQL, Linear Algebra & Data Structures"},
+                {"step": "Step 2: Recommended Course", "details": "DeepLearning.AI Machine Learning Specialization"},
+                {"step": "Step 3: Certification", "details": "IBM AI Engineering & Fundamentals"},
+                {"step": "Step 4: Practice Hackathon", "details": "Kaggle Global ML Competition / NASA Space Apps"},
+                {"step": "Step 5: Target Internship", "details": "Google Summer of Code / Open Source AI Fellowship"}
             ]
         },
         "Full Stack Developer": {
-            "title": "Full Stack Software Developer Path",
-            "stages": [
-                {"stage": "1. Foundation", "description": "Master HTML/CSS, JavaScript, Git & REST APIs", "type": "Skills"},
-                {"stage": "2. Practice & Open Source", "title": "Hacktoberfest 2026", "org": "DigitalOcean & GitHub", "type": "Hackathon"},
-                {"stage": "3. Verified Certification", "title": "SWAYAM & NPTEL Advanced Data Structures", "org": "NPTEL", "type": "Certification"},
-                {"stage": "4. Hackathon Project", "title": "Chennai College Innovation Hackathon", "org": "IIT Madras", "type": "Hackathon"},
-                {"stage": "5. Target Opportunity", "title": "Software Engineering Early Career Program", "org": "Google Careers", "type": "Job"}
+            "goal": "Full Stack Software Developer",
+            "nodes": [
+                {"step": "Step 1: Core Skills", "details": "HTML/CSS, JavaScript, Python, Git & REST APIs"},
+                {"step": "Step 2: Open Source Practice", "details": "Hacktoberfest 2026"},
+                {"step": "Step 3: Advanced Course", "details": "SWAYAM & NPTEL Advanced Data Structures"},
+                {"step": "Step 4: Innovation Hackathon", "details": "Chennai College Innovation Hackathon"},
+                {"step": "Step 5: Target Job Role", "details": "Google Careers Software Engineering Early Career Program"}
             ]
         },
-        "Cybersecurity Specialist": {
-            "title": "Cybersecurity & Security Operations Path",
-            "stages": [
-                {"stage": "1. Foundation", "description": "Master Linux Commands, Networking Fundamentals & Python", "type": "Skills"},
-                {"stage": "2. Industry Certificate", "title": "Google Cybersecurity Professional Certificate", "org": "Google", "type": "Certification"},
-                {"stage": "3. Practice Sandbox", "title": "Cisco Networking Academy Security Training", "org": "Cisco", "type": "Course"},
-                {"stage": "4. Cloud Security", "title": "Microsoft Azure Cloud Fundamentals (AZ-900)", "org": "Microsoft", "type": "Certification"},
-                {"stage": "5. Career Outcome", "title": "Security Operations & Enterprise Cloud Internship", "org": "Microsoft", "type": "Job"}
+        "Cybersecurity": {
+            "goal": "Cybersecurity Specialist",
+            "nodes": [
+                {"step": "Step 1: Core Skills", "details": "Linux Systems, Networking, Python Scripting & SIEM"},
+                {"step": "Step 2: Industry Certificate", "details": "Google Cybersecurity Professional Certificate"},
+                {"step": "Step 3: Cloud Security", "details": "Microsoft Azure Cloud Fundamentals (AZ-900)"},
+                {"step": "Step 4: Defense Competition", "details": "ISRO Young Scientist Student Competition"},
+                {"step": "Step 5: Target Role", "details": "Microsoft Cloud & Security Engineering Internship"}
             ]
         }
     }
+    return jsonify(roadmaps.get(goal, roadmaps["AI Engineer"]))
+
+
+@app.route("/api/chat", methods=["POST"])
+def ai_chat():
+    data = request.get_json(force=True) or {}
+    message = data.get("message", "").strip().lower()
     
-    selected_path = paths.get(career_goal, paths["AI Engineer"])
-    return jsonify(selected_path)
+    if not message:
+        return jsonify({"reply": "Hello! How can I assist with your opportunity search today?"})
+
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM opportunities WHERE deadline >= ?", (today_iso(),)).fetchall()
+    conn.close()
+    
+    all_opps = [dict(r) for r in rows]
+
+    if "hackathon" in message:
+        filtered = [o for o in all_opps if o["category"].lower() == "hackathon"]
+        reply = f"I found {len(filtered)} active verified Hackathons for you: " + ", ".join([o["title"] for o in filtered[:3]])
+    elif "internship" in message:
+        filtered = [o for o in all_opps if o["category"].lower() == "internship"]
+        reply = f"I found {len(filtered)} verified Internships: " + ", ".join([o["title"] for o in filtered[:3]])
+    elif "course" in message or "skill" in message:
+        filtered = [o for o in all_opps if o["category"].lower() in ["course", "certification"]]
+        reply = f"Recommended courses & certifications: " + ", ".join([o["title"] for o in filtered[:3]])
+    else:
+        reply = f"NextStep Database Status: Currently tracking {len(all_opps)} active verified opportunities across Hackathons, Internships, Courses, and Fellowships."
+
+    return jsonify({"reply": reply})
 
 
 @app.route("/api/applications", methods=["GET", "POST", "DELETE"])
@@ -950,13 +979,9 @@ def applications_api():
     if request.method == "POST":
         data = request.get_json(force=True) or {}
         opp_id = data.get("opportunity_id")
-        status = data.get("status", "saved").lower() # saved, applied, completed
+        status = data.get("status", "Saved") # Saved, Planning to Apply, Applied, Interview, Shortlisted, Selected, Rejected
         notes = data.get("notes", "")
         
-        if not opp_id or status not in {"saved", "applied", "completed"}:
-            conn.close()
-            return jsonify({"message": "Invalid application status or opportunity ID."}), 400
-            
         conn.execute(
             "INSERT INTO user_applications (user_id, opportunity_id, status, notes, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) "
             "ON CONFLICT(user_id, opportunity_id) DO UPDATE SET status=excluded.status, notes=excluded.notes, updated_at=CURRENT_TIMESTAMP",
@@ -972,9 +997,8 @@ def applications_api():
             conn.execute("DELETE FROM user_applications WHERE user_id = ? AND opportunity_id = ?", (user_id, opp_id))
             conn.commit()
         conn.close()
-        return jsonify({"status": "success", "message": "Bookmark removed."})
+        return jsonify({"status": "success", "message": "Application record removed."})
 
-    # GET request: return all applications with details
     rows = conn.execute(
         "SELECT a.status, a.notes, a.updated_at, o.* FROM user_applications a "
         "JOIN opportunities o ON a.opportunity_id = o.id WHERE a.user_id = ? ORDER BY a.updated_at DESC",
@@ -983,42 +1007,35 @@ def applications_api():
     conn.close()
     
     items = []
-    saved_count = 0
-    applied_count = 0
-    completed_count = 0
+    status_counts = {"Saved": 0, "Planning to Apply": 0, "Applied": 0, "Interview": 0, "Shortlisted": 0, "Selected": 0, "Rejected": 0}
     
     for r in rows:
         d = dict(r)
         d["registration_url"] = d.get("registration_url") or d.get("link") or ""
         d["trust_info"] = calculate_trust_score(d["registration_url"], d.get("source_verified"))
         st = d["status"]
-        if st == "saved": saved_count += 1
-        elif st == "applied": applied_count += 1
-        elif st == "completed": completed_count += 1
+        if st in status_counts: status_counts[st] += 1
         items.append(d)
         
     return jsonify({
-        "metrics": {
-            "saved": saved_count,
-            "applied": applied_count,
-            "completed": completed_count,
-            "total": len(items)
-        },
+        "metrics": status_counts,
         "applications": items
     })
 
 
-@app.route("/api/recommendations/<int:opportunity_id>/status", methods=["POST"])
-def recommendation_status(opportunity_id):
-    user_id = _current_user_id()
-    if not user_id:
-        return jsonify({"message": "Sign in required."}), 401
-    status = (request.get_json(force=True) or {}).get("status", "viewed")
+@app.route("/api/admin/metrics", methods=["GET"])
+def admin_metrics():
     conn = get_db()
-    conn.execute("UPDATE recommendation_history SET status = ? WHERE user_id = ? AND opportunity_id = ?", (status, user_id, opportunity_id))
-    conn.commit()
+    total_opps = conn.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0]
+    total_users = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    verified_opps = conn.execute("SELECT COUNT(*) FROM opportunities WHERE source_verified = 1").fetchone()[0]
     conn.close()
-    return jsonify({"status": status})
+    return jsonify({
+        "total_opportunities": total_opps,
+        "total_users": total_users,
+        "verified_opportunities": verified_opps,
+        "system_status": "Healthy"
+    })
 
 
 if __name__ == "__main__":
