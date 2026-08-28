@@ -86,7 +86,7 @@ def calculate_trust_score(url, source_verified_flag=0):
     if not cleaned:
         return {
             "trust_score": 50,
-            "trust_badge": "⚠ Source Not Verified",
+            "trust_badge": "Source Not Verified",
             "domain": "Unknown",
             "is_https": False,
             "reason": "Application URL is not specified. Verify directly with issuer before applying."
@@ -98,7 +98,7 @@ def calculate_trust_score(url, source_verified_flag=0):
     if any(shortener in host for shortener in UNTRUSTED_SHORTENERS):
         return {
             "trust_score": 40,
-            "trust_badge": "⚠ Source Not Verified",
+            "trust_badge": "Source Not Verified",
             "domain": host,
             "is_https": is_https,
             "reason": "URL uses a shortener. Exercise caution."
@@ -109,7 +109,7 @@ def calculate_trust_score(url, source_verified_flag=0):
     if is_official and is_https:
         return {
             "trust_score": 100,
-            "trust_badge": "✓ Official Source Verified",
+            "trust_badge": "Official Source Verified",
             "domain": host,
             "is_https": True,
             "reason": f"Verified official website domain from registered organization ({host})."
@@ -117,7 +117,7 @@ def calculate_trust_score(url, source_verified_flag=0):
     elif is_https and (host.endswith(".edu") or host.endswith(".ac.in") or host.endswith(".gov") or host.endswith(".org") or host.endswith(".com")):
         return {
             "trust_score": 85,
-            "trust_badge": "✓ Official Source Verified",
+            "trust_badge": "Official Source Verified",
             "domain": host,
             "is_https": True,
             "reason": f"Secure HTTPS portal on registered domain ({host})."
@@ -125,7 +125,7 @@ def calculate_trust_score(url, source_verified_flag=0):
     else:
         return {
             "trust_score": 50,
-            "trust_badge": "⚠ Source Not Verified",
+            "trust_badge": "Source Not Verified",
             "domain": host or "Non-HTTPS",
             "is_https": is_https,
             "reason": "Source domain requires manual verification."
@@ -634,37 +634,37 @@ def evaluate_eligibility(profile, opportunity):
     if dept_req and dept_req != "all departments":
         total_checks += 1
         if dept and (dept in dept_req or any(tok in dept_req for tok in dept.split() if len(tok) > 2)):
-            reasons.append(f"✅ Department match: Your {profile.get('department')} background meets requirements ({opportunity.get('dept_req')}).")
+            reasons.append(f"[MATCH] Department match: Your {profile.get('department')} background meets requirements ({opportunity.get('dept_req')}).")
             matches += 1
         else:
-            reasons.append(f"⚠️ Department check: Opportunity prefers {opportunity.get('dept_req')}.")
+            reasons.append(f"[CHECK] Department check: Opportunity prefers {opportunity.get('dept_req')}.")
     else:
-        reasons.append("✅ Open to all department specializations.")
+        reasons.append("[MATCH] Open to all department specializations.")
 
     if year_req:
         total_checks += 1
         if year and year in year_req:
-            reasons.append(f"✅ Academic year match: Year {year} student meets eligibility criteria.")
+            reasons.append(f"[MATCH] Academic year match: Year {year} student meets eligibility criteria.")
             matches += 1
         else:
-            reasons.append(f"⚠️ Academic year check: Preferred for Year {opportunity.get('year_req')}.")
+            reasons.append(f"[CHECK] Academic year check: Preferred for Year {opportunity.get('year_req')}.")
 
     if opp_skills:
         total_checks += 1
         req_skill_list = [s.strip().lower() for s in opp_skills.split(",") if s.strip()]
         matched_skills = [s for s in req_skill_list if s in user_skills or any(us in s or s in us for us in user_skills)]
         if matched_skills:
-            reasons.append(f"✅ Skill match: You possess required skills ({', '.join([s.title() for s in matched_skills[:3]])}).")
+            reasons.append(f"[MATCH] Skill match: You possess required skills ({', '.join([s.title() for s in matched_skills[:3]])}).")
             matches += 1
         else:
-            reasons.append(f"⚠️ Missing core skills ({opportunity.get('skills')}). Bridge skill gap with recommended courses.")
+            reasons.append(f"[CHECK] Missing core skills ({opportunity.get('skills')}). Bridge skill gap with recommended courses.")
 
     if total_checks == 0 or matches == total_checks:
-        status = "🟢 Eligible"
+        status = "Eligible"
     elif matches >= 1:
-        status = "🟡 Possibly Eligible"
+        status = "Possibly Eligible"
     else:
-        status = "🔴 Not Eligible"
+        status = "Not Eligible"
 
     return {
         "status": status,
@@ -709,17 +709,22 @@ def calculate_ai_match(profile, opportunity, all_courses):
     if career and (career in cat or cat in career):
         score += 10
 
+    pref_types = profile.get("opportunity_types") or []
+    if pref_types and "All" not in pref_types:
+        if any(pt.lower() in cat or cat in pt.lower() for pt in pref_types):
+            score += 15
+
     match_score = min(98, max(50, score))
 
     checklist = []
     if matching_skills:
-        checklist.append(f"✅ Your {', '.join(matching_skills[:2])} skill(s) match requirement")
+        checklist.append(f"[MATCH] Your {', '.join(matching_skills[:2])} skill(s) match requirement")
     if dept:
-        checklist.append(f"✅ Your {profile.get('department')} academic background matches")
+        checklist.append(f"[MATCH] Your {profile.get('department')} academic background matches")
     if profile.get("year"):
-        checklist.append(f"✅ You meet Year {profile.get('year')} student education criteria")
+        checklist.append(f"[MATCH] You meet Year {profile.get('year')} student education criteria")
     if profile.get("location"):
-        checklist.append(f"⚠️ Location preference ({profile.get('location')}) evaluated against {opportunity.get('location')}")
+        checklist.append(f"[CHECK] Location preference ({profile.get('location')}) evaluated against {opportunity.get('location')}")
 
     deadline = opportunity.get("deadline", "Upcoming")
     action_plan = [
@@ -738,9 +743,9 @@ def calculate_ai_match(profile, opportunity, all_courses):
     if days_rem < 0:
         deadline_badge = "Expired"
     elif days_rem <= 3:
-        deadline_badge = f"🔥 {days_rem} days left (Closing Soon)"
+        deadline_badge = f"{days_rem} days left (Closing Soon)"
     else:
-        deadline_badge = f"📅 {days_rem} days remaining"
+        deadline_badge = f"{days_rem} days remaining"
 
     return {
         "match_score": match_score,
@@ -984,19 +989,19 @@ def ai_chat():
     if "closing" in msg_lower or "soon" in msg_lower or "week" in msg_lower:
         limit_date = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
         matched_opps = [o for o in all_opps if o["deadline"] <= limit_date]
-        reply_title = "🔥 Opportunities Closing Within 7 Days:"
+        reply_title = "Opportunities Closing Within 7 Days:"
     elif "hackathon" in msg_lower:
         matched_opps = [o for o in all_opps if o["category"].lower() == "hackathon"]
-        reply_title = "⚡ Active Verified Hackathons:"
+        reply_title = "Active Verified Hackathons:"
     elif "internship" in msg_lower:
         matched_opps = [o for o in all_opps if o["category"].lower() == "internship"]
-        reply_title = "💼 Active Verified Internships:"
+        reply_title = "Active Verified Internships:"
     elif "course" in msg_lower or "certification" in msg_lower or "skill" in msg_lower:
         matched_opps = [o for o in all_opps if o["category"].lower() in ["course", "certification"]]
-        reply_title = "🎓 Recommended Courses & Certifications:"
+        reply_title = "Recommended Courses & Certifications:"
     elif "job" in msg_lower:
         matched_opps = [o for o in all_opps if o["category"].lower() == "job"]
-        reply_title = "🚀 Entry-Level Software Engineering Jobs:"
+        reply_title = "Entry-Level Software Engineering Jobs:"
     else:
         words = [w for w in msg_lower.split() if len(w) > 2]
         matched_opps = [
@@ -1005,7 +1010,7 @@ def ai_chat():
                 for w in words
             )
         ]
-        reply_title = f"🔍 Relevant Verified Opportunities for '{message}':"
+        reply_title = f"Relevant Verified Opportunities for '{message}':"
 
     if matched_opps:
         bullet_list = "\n\n".join([

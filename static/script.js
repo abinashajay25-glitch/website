@@ -112,9 +112,9 @@ function renderOpportunityGrid(items, container) {
     }
 
     container.innerHTML = filtered.map(opp => {
-        const trust = opp.trust_info || { trust_badge: "✓ Official Source Verified", trust_score: 100 };
+        const trust = opp.trust_info || { trust_badge: "Official Source Verified", trust_score: 100 };
         const trustClass = trust.trust_score >= 85 ? "verified" : "unverified";
-        const elig = opp.eligibility_eval || { status: "🟢 Eligible", reasons: [] };
+        const elig = opp.eligibility_eval || { status: "Eligible", reasons: [] };
         
         const whyChecklist = (opp.why_match_checklist || []).map(item => `
             <div class="checklist-item">${item}</div>
@@ -127,12 +127,12 @@ function renderOpportunityGrid(items, container) {
                 <div class="card-header-bar">
                     <span class="badge-category">${opp.category}</span>
                     <span class="badge-trust ${trustClass}">${trust.trust_badge}</span>
-                    <span class="badge-match-score">⚡ ${opp.match_score || 85}% Match</span>
+                    <span class="badge-match-score">Match: ${opp.match_score || 85}%</span>
                 </div>
 
                 <div>
                     <h3 class="opp-title">${opp.title}</h3>
-                    <div class="opp-org">🏢 ${opp.organization} • 📍 ${opp.location || 'Remote'} • ${opp.deadline_badge || 'Upcoming'}</div>
+                    <div class="opp-org">Organization: ${opp.organization} | Location: ${opp.location || 'Remote'} | ${opp.deadline_badge || 'Upcoming'}</div>
                 </div>
 
                 <p class="opp-desc">${opp.description || ''}</p>
@@ -144,15 +144,15 @@ function renderOpportunityGrid(items, container) {
 
                 ${whyChecklist ? `
                     <div class="why-match-box">
-                        <div class="why-match-title">💡 Why this matches you:</div>
+                        <div class="why-match-title">Why this matches you:</div>
                         ${whyChecklist}
                     </div>
                 ` : ''}
 
                 <div class="card-actions">
-                    <button class="btn-action-icon" onclick="updateAppStatus(${opp.id}, 'Saved')">📌 Save</button>
-                    <button class="btn-action-icon" onclick="updateAppStatus(${opp.id}, 'Applied')">🚀 Apply</button>
-                    <a class="btn-apply" href="${opp.registration_url || opp.link || '#'}" target="_blank" rel="noopener">Official Source Portal ↗</a>
+                    <button class="btn-action-icon" onclick="updateAppStatus(${opp.id}, 'Saved')">Save</button>
+                    <button class="btn-action-icon" onclick="updateAppStatus(${opp.id}, 'Applied')">Apply</button>
+                    <a class="btn-apply" href="${opp.registration_url || opp.link || '#'}" target="_blank" rel="noopener">Official Source Portal</a>
                 </div>
             </article>
         `;
@@ -283,7 +283,7 @@ function formatMarkdown(text) {
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\*(.*?)\*/g, '<em>$1</em>')
         .replace(/`([^`]+)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace;">$1</code>')
-        .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color: var(--accent-cyan); font-weight: bold; text-decoration: underline;">$1 ↗</a>')
+        .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color: var(--accent-cyan); font-weight: bold; text-decoration: underline;">$1</a>')
         .replace(/\n/g, '<br>');
 }
 
