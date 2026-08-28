@@ -64,6 +64,12 @@ async function loadProfileAndMatches() {
                         if (cb) cb.checked = true;
                     });
                 }
+                if (Array.isArray(data.profile.opportunity_types)) {
+                    data.profile.opportunity_types.forEach(type => {
+                        const cb = document.querySelector(`input[name="opportunity_types"][value="${type}"]`);
+                        if (cb) cb.checked = true;
+                    });
+                }
             }
             fetchMatchedOpportunities();
         }
@@ -344,10 +350,14 @@ function initProfileForm() {
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
         const selectedSkills = [...document.querySelectorAll('input[name="skills"]:checked')].map(cb => cb.value);
+        const selectedTypes = [...document.querySelectorAll('input[name="opportunity_types"]:checked')].map(cb => cb.value);
+        
         const profile = {
             department: document.getElementById("department").value,
             year: document.getElementById("year").value,
             skills: selectedSkills,
+            opportunity_types: selectedTypes,
+            interests: selectedTypes,
             location: document.getElementById("location").value,
             career: document.getElementById("career").value
         };
