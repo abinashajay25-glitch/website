@@ -945,28 +945,79 @@ def career_roadmap():
 @app.route("/api/chat", methods=["POST"])
 def ai_chat():
     data = request.get_json(force=True) or {}
-    message = data.get("message", "").strip().lower()
+    message = (data.get("message") or "").strip()
     
     if not message:
-        return jsonify({"reply": "Hello! How can I assist with your opportunity search today?"})
+        return jsonify({"reply": "Hello! I am your NextStep AI Assistant. How can I assist with your opportunity search today?"})
 
     conn = get_db()
-    rows = conn.execute("SELECT * FROM opportunities WHERE deadline >= ?", (today_iso(),)).fetchall()
+    rows = conn.execute("SELECT * FROM opportunities WHERE deadline >= ? ORDER BY deadline ASC", (today_iso(),)).fetchall()
     conn.close()
     
     all_opps = [dict(r) for r in rows]
+    msg_lower = message.lower()
 
-    if "hackathon" in message:
-        filtered = [o for o in all_opps if o["category"].lower() == "hackathon"]
-        reply = f"I found {len(filtered)} active verified Hackathons for you: " + ", ".join([o["title"] for o in filtered[:3]])
-    elif "internship" in message:
-        filtered = [o for o in all_opps if o["category"].lower() == "internship"]
-        reply = f"I found {len(filtered)} verified Internships: " + ", ".join([o["title"] for o in filtered[:3]])
-    elif "course" in message or "skill" in message:
-        filtered = [o for o in all_opps if o["category"].lower() in ["course", "certification"]]
-        reply = f"Recommended courses & certifications: " + ", ".join([o["title"] for o in filtered[:3]])
+    if GEMINI_API_KEY:
+        try:
+            from google import genai
+            client = genai.Client(api_key=GEMINI_API_KEY)
+            opp_context = "\n".join([
+                f"- {o['title']} ({o['organization']}) | Category: {o['category']} | Deadline: {o['deadline']} | Skills: {o['skills']} | URL: {o['registration_url']}"
+                for o in all_opps
+            ])
+            system_prompt = (
+                "You are NextStep AI, an intelligent career & opportunity assistant for students. "
+                "Answer the user's question using ONLY the provided verified opportunities database. "
+                "Never fabricate non-existent opportunities. Keep responses encouraging, concise, and formatted in Markdown."
+            )
+            user_prompt = f"Available Opportunities Database:\n{opp_context}\n\nUser Question: {message}"
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_prompt,
+                config={"system_instruction": system_prompt}
+            )
+            return jsonify({"reply": response.text})
+        except Exception:
+            pass
+
+    matched_opps = []
+    if "closing" in msg_lower or "soon" in msg_lower or "week" in msg_lower:
+        limit_date = (datetime.now(timezone.utc) + timedelta(days=7)).strftime("%Y-%m-%d")
+        matched_opps = [o for o in all_opps if o["deadline"] <= limit_date]
+        reply_title = "🔥 Opportunities Closing Within 7 Days:"
+    elif "hackathon" in msg_lower:
+        matched_opps = [o for o in all_opps if o["category"].lower() == "hackathon"]
+        reply_title = "⚡ Active Verified Hackathons:"
+    elif "internship" in msg_lower:
+        matched_opps = [o for o in all_opps if o["category"].lower() == "internship"]
+        reply_title = "💼 Active Verified Internships:"
+    elif "course" in msg_lower or "certification" in msg_lower or "skill" in msg_lower:
+        matched_opps = [o for o in all_opps if o["category"].lower() in ["course", "certification"]]
+        reply_title = "🎓 Recommended Courses & Certifications:"
+    elif "job" in msg_lower:
+        matched_opps = [o for o in all_opps if o["category"].lower() == "job"]
+        reply_title = "🚀 Entry-Level Software Engineering Jobs:"
     else:
-        reply = f"NextStep Database Status: Currently tracking {len(all_opps)} active verified opportunities across Hackathons, Internships, Courses, and Fellowships."
+        words = [w for w in msg_lower.split() if len(w) > 2]
+        matched_opps = [
+            o for o in all_opps if any(
+                w in o["title"].lower() or w in o["organization"].lower() or w in (o["skills"] or "").lower() or w in o["category"].lower()
+                for w in words
+            )
+        ]
+        reply_title = f"🔍 Relevant Verified Opportunities for '{message}':"
+
+    if matched_opps:
+        bullet_list = "\n\n".join([
+            f"• **[{o['title']}]({o['registration_url'] or o['link'] or '#'})** ({o['organization']})\n  Category: *{o['category']}* | Deadline: *{o['deadline']}*\n  Required Skills: `{o['skills']}`"
+            for o in matched_opps[:4]
+        ])
+        reply = f"{reply_title}\n\n{bullet_list}"
+    else:
+        reply = (
+            f"I searched the NextStep verified database ({len(all_opps)} active opportunities). "
+            f"No exact matches found for '{message}'. Try asking for **hackathons**, **internships**, **courses**, or **opportunities closing soon**!"
+        )
 
     return jsonify({"reply": reply})
 

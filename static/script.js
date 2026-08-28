@@ -271,6 +271,16 @@ async function loadCareerRoadmap() {
     }
 }
 
+function formatMarkdown(text) {
+    if (!text) return "";
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/`([^`]+)`/g, '<code style="background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; font-family: monospace;">$1</code>')
+        .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener" style="color: var(--accent-cyan); font-weight: bold; text-decoration: underline;">$1 ↗</a>')
+        .replace(/\n/g, '<br>');
+}
+
 // AI CHAT ASSISTANT
 function initAIChat() {
     const form = document.getElementById("chatForm");
@@ -293,11 +303,21 @@ function initAIChat() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ message: msg })
             });
-            const data = await res.json();
-            history.innerHTML += `<div class="chat-msg bot">${data.reply}</div>`;
+
+            let data = {};
+            const contentType = res.headers.get("content-type") || "";
+            if (contentType.includes("application/json")) {
+                data = await res.json();
+            } else {
+                data = { reply: "Sorry, received unexpected response from AI Assistant server." };
+            }
+
+            const formattedReply = formatMarkdown(data.reply || "No response generated.");
+            history.innerHTML += `<div class="chat-msg bot">${formattedReply}</div>`;
             history.scrollTop = history.scrollHeight;
         } catch (err) {
-            history.innerHTML += `<div class="chat-msg bot">Sorry, error reaching NextStep AI Assistant.</div>`;
+            history.innerHTML += `<div class="chat-msg bot">Sorry, error reaching NextStep AI Assistant. ${err.message}</div>`;
+            history.scrollTop = history.scrollHeight;
         }
     });
 }
